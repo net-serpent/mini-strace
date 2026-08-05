@@ -1,5 +1,5 @@
 /*
- * mini-strace v0.9
+ * mini-strace v1.0
  *
  * Minimal syscall tracer using ptrace(2). Runs a child process,
  * stops it on every syscall entry/exit, prints the syscall name,
@@ -11,6 +11,9 @@
  * way, minus the NUL-termination assumption (the data isn't
  * necessarily text) — read()'s dump is deferred to the exit-stop
  * since its buffer is only actually filled after the syscall runs.
+ * Optional -e trace=SET filters which syscalls get printed at all
+ * (SET is a comma-separated mix of category names — file, network,
+ * process — and/or exact syscall names).
  *
  * Supports x86-64 and ARM64 (aarch64) Linux. The two architectures
  * have completely different syscall ABIs — different register
@@ -20,9 +23,10 @@
  *
  * Build: make
  * Run:   ./mini-strace /bin/ls -la
+ *        ./mini-strace -e trace=file /bin/cat foo.txt
+ *        ./mini-strace -e trace=network,openat /bin/curl example.com
  *
  * Next up:
- *   - -e trace=network / -e trace=file filters
  *   - attach to an already-running process by PID
  */
 
@@ -145,6 +149,78 @@ static const buffer_arg_entry *read_arg_lookup(const char *syscall) {
             return &read_arg_table[i];
     }
     return NULL;
+}
+
+/* -e trace=SET filtering. SET is a comma-separated list where each
+ * token is either a category name (file/network/process) or an
+ * exact syscall name — same idea as real strace's -e trace, just
+ * with three hardcoded categories instead of a full syscall
+ * classification. Not exhaustive, covers the common ones. */
+static const char *file_syscalls[] = {
+    "open", "openat", "close", "read", "write", "pread64", "pwrite64",
+    "stat", "lstat", "fstat", "newfstatat", "statx", "access",
+    "faccessat", "faccessat2", "unlink", "unlinkat", "rename",
+    "renameat", "renameat2", "mkdir", "mkdirat", "rmdir", "chdir",
+    "chmod", "fchmodat", "chown", "lchown", "fchownat", "truncate",
+    "readlink", "readlinkat", "statfs", "lseek", "getcwd", "creat",
+    NULL,
+};
+
+static const char *network_syscalls[] = {
+    "socket", "connect", "accept", "accept4", "bind", "listen",
+    "send", "recv", "sendto", "recvfrom", "sendmsg", "recvmsg",
+    "setsockopt", "getsockopt", "shutdown", "socketpair",
+    "getsockname", "getpeername",
+    NULL,
+};
+
+static const char *process_syscalls[] = {
+    "fork", "vfork", "clone", "clone3", "execve", "execveat", "exit",
+    "exit_group", "wait4", "waitid", "kill", "tgkill", "tkill",
+    "ptrace", "prctl",
+    NULL,
+};
+
+static int name_in_list(const char **list, const char *name) {
+    for (int i = 0; list[i] != NULL; i++) {
+        if (strcmp(list[i], name) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+/* The parsed -e trace=SET tokens, filled in once by parse_trace_filter().
+ * A NULL filter_tokens means "no filter — trace everything", which is
+ * also the state before -e is ever parsed. */
+#define MAX_FILTER_TOKENS 16
+static char filter_tokens[MAX_FILTER_TOKENS][64];
+static int filter_token_count = 0;
+
+static void parse_trace_filter(char *set) {
+    char *tok = strtok(set, ",");
+    while (tok != NULL && filter_token_count < MAX_FILTER_TOKENS) {
+        snprintf(filter_tokens[filter_token_count], sizeof(filter_tokens[0]), "%s", tok);
+        filter_token_count++;
+        tok = strtok(NULL, ",");
+    }
+}
+
+static int syscall_allowed(const char *name) {
+    if (filter_token_count == 0)
+        return 1;  /* no filter set — trace everything */
+
+    for (int i = 0; i < filter_token_count; i++) {
+        const char *tok = filter_tokens[i];
+        if (strcmp(tok, "file") == 0 && name_in_list(file_syscalls, name))
+            return 1;
+        if (strcmp(tok, "network") == 0 && name_in_list(network_syscalls, name))
+            return 1;
+        if (strcmp(tok, "process") == 0 && name_in_list(process_syscalls, name))
+            return 1;
+        if (strcmp(tok, name) == 0)  /* exact syscall name */
+            return 1;
+    }
+    return 0;
 }
 
 #define STR_ARG_BUF_LEN 200
@@ -347,6 +423,7 @@ static void run_tracer(pid_t child) {
     const char *pending_name = NULL;
     unsigned long long pending_args[6] = {0};
     const buffer_arg_entry *pending_read_entry = NULL;
+    int suppressed = 0;  /* current syscall excluded by -e trace=SET */
 
     /* wait for the initial SIGSTOP from raise() above */
     waitpid(child, &status, 0);
@@ -409,7 +486,16 @@ static void run_tracer(pid_t child) {
             };
 
             const buffer_arg_entry *read_entry = read_arg_lookup(name);
-            if (read_entry != NULL) {
+
+            suppressed = !syscall_allowed(name);
+
+            if (suppressed) {
+                /* filtered out by -e trace=SET — don't print anything,
+                 * but still track it through entry/exit like normal so
+                 * the toggle stays in sync and pending state from a
+                 * *previous* (allowed) read() doesn't leak in. */
+                pending_read_entry = NULL;
+            } else if (read_entry != NULL) {
                 /* read()-family: its buffer is unpopulated until the
                  * syscall actually runs, so there's nothing useful
                  * to dereference yet — stash everything and print
@@ -450,32 +536,37 @@ static void run_tracer(pid_t child) {
              * platform uses for it */
             long ret = return_val_of(&regs);
 
-            if (pending_read_entry != NULL) {
-                /* this is the deferred read()-family print: build
-                 * the whole "name(args) = ret" line now, using ret
-                 * itself as the buffer length — that's the actual
-                 * number of bytes the kernel put there, which is
-                 * usually less than the requested count and is the
-                 * only length we can trust at this point. */
-                char argbuf[6][STR_ARG_BUF_LEN];
-                for (int i = 0; i < 6; i++) {
-                    if (i == pending_read_entry->buf_idx && ret > 0)
-                        read_child_buffer(child, pending_args[i], (unsigned long long)ret,
-                                           argbuf[i], sizeof(argbuf[i]));
-                    else
-                        snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", pending_args[i]);
-                }
-                printf("%s(%s, %s, %s, %s, %s, %s) ",
-                       pending_name, argbuf[0], argbuf[1], argbuf[2],
-                       argbuf[3], argbuf[4], argbuf[5]);
-                pending_read_entry = NULL;
-            }
-
-            if (ret < 0) {
-                const char *ename = strerrorname_np((int)(-ret));
-                printf("= %ld (%s)\n", ret, ename ? ename : "unknown errno");
+            if (suppressed) {
+                /* filtered out — nothing was printed at entry, so
+                 * nothing prints here either */
             } else {
-                printf("= %ld\n", ret);
+                if (pending_read_entry != NULL) {
+                    /* this is the deferred read()-family print: build
+                     * the whole "name(args) = ret" line now, using ret
+                     * itself as the buffer length — that's the actual
+                     * number of bytes the kernel put there, which is
+                     * usually less than the requested count and is the
+                     * only length we can trust at this point. */
+                    char argbuf[6][STR_ARG_BUF_LEN];
+                    for (int i = 0; i < 6; i++) {
+                        if (i == pending_read_entry->buf_idx && ret > 0)
+                            read_child_buffer(child, pending_args[i], (unsigned long long)ret,
+                                               argbuf[i], sizeof(argbuf[i]));
+                        else
+                            snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", pending_args[i]);
+                    }
+                    printf("%s(%s, %s, %s, %s, %s, %s) ",
+                           pending_name, argbuf[0], argbuf[1], argbuf[2],
+                           argbuf[3], argbuf[4], argbuf[5]);
+                    pending_read_entry = NULL;
+                }
+
+                if (ret < 0) {
+                    const char *ename = strerrorname_np((int)(-ret));
+                    printf("= %ld (%s)\n", ret, ename ? ename : "unknown errno");
+                } else {
+                    printf("= %ld\n", ret);
+                }
             }
             in_syscall = 0;
         }
@@ -483,9 +574,29 @@ static void run_tracer(pid_t child) {
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s <program> [args...]\n", argv[0]);
+    int argi = 1;
+
+    while (argi < argc && strcmp(argv[argi], "-e") == 0) {
+        if (argi + 1 >= argc) {
+            fprintf(stderr, "error: -e needs an argument, e.g. -e trace=file\n");
+            return 1;
+        }
+        char *opt = argv[argi + 1];
+        if (strncmp(opt, "trace=", 6) == 0) {
+            parse_trace_filter(opt + 6);  /* modifies opt in place via strtok */
+        } else {
+            fprintf(stderr, "error: unrecognized -e option '%s' (only trace=SET is supported)\n", opt);
+            return 1;
+        }
+        argi += 2;
+    }
+
+    if (argi >= argc) {
+        fprintf(stderr, "usage: %s [-e trace=SET] <program> [args...]\n", argv[0]);
         fprintf(stderr, "example: %s /bin/echo hello\n", argv[0]);
+        fprintf(stderr, "example: %s -e trace=file /bin/cat foo.txt\n", argv[0]);
+        fprintf(stderr, "  SET is a comma-separated mix of categories (file, network,\n");
+        fprintf(stderr, "  process) and/or exact syscall names, e.g. trace=network,openat\n");
         return 1;
     }
 
@@ -496,7 +607,7 @@ int main(int argc, char **argv) {
     }
 
     if (child == 0) {
-        run_tracee(&argv[1]);
+        run_tracee(&argv[argi]);
     } else {
         run_tracer(child);
     }
