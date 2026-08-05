@@ -34,6 +34,14 @@ make
 ./mini-strace -e trace=file /bin/cat some-file.txt
 ```
 
+You can also attach to an already-running process by PID instead of
+launching a new one:
+
+```bash
+./mini-strace -p 12345
+./mini-strace -e trace=network -p 12345
+```
+
 On macOS:
 
 ```bash
