@@ -42,6 +42,16 @@ launching a new one:
 ./mini-strace -e trace=network -p 12345
 ```
 
+By default only the one process you launch (or attach to) gets
+traced — anything it forks runs untraced. Pass `-f` to follow into
+child processes too; each output line gets a `[pid N] ` prefix so
+you can tell which process it came from:
+
+```bash
+./mini-strace -f /bin/sh -c 'echo hi'
+./mini-strace -f -e trace=process /bin/make
+```
+
 On macOS:
 
 ```bash
@@ -90,6 +100,18 @@ database. The tracer still steps through every syscall either way,
 filtering only decides whether to print, not whether to trace, so a
 suppressed syscall still needs its entry/exit bookkeeping kept in
 sync with everything else, it just skips the `printf`.
+
+`-f` uses `PTRACE_O_TRACEFORK`/`TRACEVFORK`/`TRACECLONE` so new
+children auto-attach to the tracer with the same options already
+inherited, then the main loop switches from waiting on one fixed pid
+to `waitpid(-1, ...)`, picking up whichever tracee stops next, with a
+small fixed-size table tracking each pid's own entry/exit state
+independently. One known rough edge: since a syscall's `name(args)`
+and its `= ret` are still two separate prints (so a call that's still
+running is visible before it returns, same as real strace), a
+different process's line can land in between them when several
+processes are stopped near the same time — cosmetic only, the data
+itself is still all there.
 
 ## Requirements
 

@@ -13,7 +13,11 @@
  * since its buffer is only actually filled after the syscall runs.
  * Optional -e trace=SET filters which syscalls get printed at all
  * (SET is a comma-separated mix of category names — file, network,
- * process — and/or exact syscall names).
+ * process — and/or exact syscall names). Optional -f follows
+ * fork()/vfork()/clone() into child processes instead of only ever
+ * tracing the one process that was launched; output lines get a
+ * "[pid N] " prefix so it's clear which process each line belongs
+ * to.
  *
  * Supports x86-64 and ARM64 (aarch64) Linux. The two architectures
  * have completely different syscall ABIs — different register
@@ -26,6 +30,7 @@
  *        ./mini-strace -e trace=file /bin/cat foo.txt
  *        ./mini-strace -e trace=network,openat /bin/curl example.com
  *        ./mini-strace -p 12345
+ *        ./mini-strace -f /bin/sh -c 'echo hi'
  */
 
 #define _GNU_SOURCE
@@ -406,77 +411,181 @@ static void run_tracee(char **argv) {
     exit(1);
 }
 
-static void run_tracer(pid_t child) {
-    int status;
-    int in_syscall = 0;      /* 0 = waiting for entry, 1 = waiting for exit */
-    long syscall_no = -1;
-    long call_count = 0;
-    int pending_signal = 0;  /* signal to re-deliver to the child, if any */
+/* Per-tracee state, needed once -f lets more than one process be
+ * traced at a time — each pid has its own independent entry/exit
+ * toggle and its own in-flight deferred-print state, so these can no
+ * longer live as locals in run_tracer() the way they did when there
+ * was only ever one tracee. Fixed-size table instead of anything
+ * dynamic, same pragmatic style as MAX_FILTER_TOKENS above; 64
+ * concurrent tracees is far more than this is ever meant to handle. */
+#define MAX_TRACEES 64
 
-    /* State for syscalls whose print gets deferred to the exit-stop
-     * (currently just read()/pread64() — see read_arg_table above).
-     * pending_read_entry doubles as the "is a print deferred right
-     * now" flag; NULL means the exit-stop should use the normal
-     * immediate "= ret" path instead. */
-    const char *pending_name = NULL;
-    unsigned long long pending_args[6] = {0};
-    const buffer_arg_entry *pending_read_entry = NULL;
-    int suppressed = 0;  /* current syscall excluded by -e trace=SET */
+typedef struct {
+    pid_t pid;
+    int active;
+    int in_syscall;
+    const char *pending_name;
+    unsigned long long pending_args[6];
+    const buffer_arg_entry *pending_read_entry;
+    int suppressed;
+} tracee_state;
+
+static tracee_state tracees[MAX_TRACEES];
+
+static tracee_state *find_tracee(pid_t pid) {
+    for (int i = 0; i < MAX_TRACEES; i++) {
+        if (tracees[i].active && tracees[i].pid == pid)
+            return &tracees[i];
+    }
+    return NULL;
+}
+
+/* Idempotent: returns the existing entry if pid is already tracked
+ * (harmless re-registration happens naturally, e.g. a new child's own
+ * first stop can arrive either before or after its PTRACE_EVENT_FORK
+ * notification on the parent). */
+static tracee_state *add_tracee(pid_t pid) {
+    tracee_state *existing = find_tracee(pid);
+    if (existing != NULL)
+        return existing;
+    for (int i = 0; i < MAX_TRACEES; i++) {
+        if (!tracees[i].active) {
+            memset(&tracees[i], 0, sizeof(tracees[i]));
+            tracees[i].pid = pid;
+            tracees[i].active = 1;
+            return &tracees[i];
+        }
+    }
+    return NULL;  /* table full — extremely fork-heavy tracee, stop tracking new ones */
+}
+
+static void remove_tracee(pid_t pid) {
+    tracee_state *ts = find_tracee(pid);
+    if (ts != NULL)
+        ts->active = 0;
+}
+
+/* follow_forks (-f) makes the tracer follow fork()/vfork()/clone()
+ * into child processes instead of only ever watching the one process
+ * it started with. Without it, the loop only has one tracee ever, so
+ * this collapses back to the exact same one-child logic as before —
+ * the two paths are kept separate below (rather than always running
+ * the general multi-pid machinery) so default output/behavior is
+ * untouched. */
+static void run_tracer(pid_t child, int follow_forks) {
+    int status;
+    long call_count = 0;
 
     /* wait for the initial SIGSTOP from raise() above */
     waitpid(child, &status, 0);
 
-    ptrace(PTRACE_SETOPTIONS, child, NULL, PTRACE_O_TRACESYSGOOD);
+    int options = PTRACE_O_TRACESYSGOOD;
+    if (follow_forks)
+        options |= PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE;
+    ptrace(PTRACE_SETOPTIONS, child, NULL, (void *)(long)options);
+
+    add_tracee(child);
+    int active_count = 1;
+
+    if (ptrace(PTRACE_SYSCALL, child, NULL, NULL) == -1) {
+        perror("ptrace(SYSCALL)");
+        return;
+    }
 
     for (;;) {
-        if (ptrace(PTRACE_SYSCALL, child, NULL, (void *)(long)pending_signal) == -1) {
-            perror("ptrace(SYSCALL)");
-            break;
-        }
-        pending_signal = 0;
-
-        waitpid(child, &status, 0);
-
-        if (WIFEXITED(status)) {
-            fprintf(stderr, "\n[mini-strace] process exited, code %d, total syscalls: %ld\n",
-                    WEXITSTATUS(status), call_count);
-            break;
-        }
-        if (WIFSIGNALED(status)) {
-            fprintf(stderr, "\n[mini-strace] process killed by signal %d\n", WTERMSIG(status));
-            break;
-        }
-        if (!WIFSTOPPED(status)) {
+        pid_t wpid = waitpid(-1, &status, __WALL);
+        if (wpid == -1) {
+            if (errno == ECHILD)
+                break;  /* no tracees left */
             continue;
         }
 
-        /* PTRACE_SYSCALL stops the child both on real syscall
+        if (WIFEXITED(status) || WIFSIGNALED(status)) {
+            remove_tracee(wpid);
+            active_count--;
+            if (!follow_forks) {
+                if (WIFEXITED(status))
+                    fprintf(stderr, "\n[mini-strace] process exited, code %d, total syscalls: %ld\n",
+                            WEXITSTATUS(status), call_count);
+                else
+                    fprintf(stderr, "\n[mini-strace] process killed by signal %d\n", WTERMSIG(status));
+            } else {
+                if (WIFEXITED(status))
+                    fprintf(stderr, "\n[mini-strace] pid %d exited, code %d\n", wpid, WEXITSTATUS(status));
+                else
+                    fprintf(stderr, "\n[mini-strace] pid %d killed by signal %d\n", wpid, WTERMSIG(status));
+                if (active_count <= 0)
+                    fprintf(stderr, "[mini-strace] all tracees exited, total syscalls: %ld\n", call_count);
+            }
+            if (active_count <= 0)
+                break;
+            continue;
+        }
+
+        if (!WIFSTOPPED(status))
+            continue;
+
+        int stopsig = WSTOPSIG(status);
+        int event = status >> 16;
+
+        if (follow_forks && stopsig == SIGTRAP &&
+            (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK || event == PTRACE_EVENT_CLONE)) {
+            /* New child spawned. PTRACE_O_TRACE{FORK,VFORK,CLONE}
+             * auto-attaches it to us with the same options already
+             * inherited, so all that's needed here is to start
+             * tracking it and let both it and the parent keep going;
+             * the new pid's own first stop will surface separately
+             * through this same waitpid(-1, ...) loop. */
+            unsigned long new_pid = 0;
+            if (ptrace(PTRACE_GETEVENTMSG, wpid, NULL, &new_pid) != -1) {
+                if (add_tracee((pid_t)new_pid) != NULL) {
+                    active_count++;
+                    fprintf(stderr, "[mini-strace] new child pid %ld\n", new_pid);
+                }
+            }
+            ptrace(PTRACE_SYSCALL, wpid, NULL, NULL);
+            continue;
+        }
+
+        /* PTRACE_SYSCALL stops a tracee both on real syscall
          * boundaries *and* whenever a signal is about to be
          * delivered to it. PTRACE_O_TRACESYSGOOD (set above) makes
-         * genuine syscall-stops report SIGTRAP with the high bit
-         * set (SIGTRAP | 0x80) so we can tell the two apart —
-         * without this check, a signal landing mid-trace desyncs
-         * the entry/exit toggle and every arg/return value after
-         * that point is garbage. */
-        int stopsig = WSTOPSIG(status);
+         * genuine syscall-stops report SIGTRAP with the high bit set
+         * (SIGTRAP | 0x80) so we can tell the two apart — without
+         * this check, a signal landing mid-trace desyncs the
+         * entry/exit toggle and every arg/return value after that
+         * point is garbage. */
         if (stopsig != (SIGTRAP | 0x80)) {
-            /* not a syscall-stop — remember to hand the signal back
-             * to the child on the next PTRACE_SYSCALL so it doesn't
-             * just get silently eaten */
-            if (stopsig != SIGTRAP)
-                pending_signal = stopsig;
+            /* Not a syscall-stop: either a genuine signal (redeliver
+             * it so it isn't silently eaten) or, under -f, a new
+             * child's own first stop arriving as a plain SIGTRAP
+             * before/instead of the parent's event notification —
+             * either way just track it and let it continue. */
+            int deliver = (stopsig != SIGTRAP) ? stopsig : 0;
+            add_tracee(wpid);
+            ptrace(PTRACE_SYSCALL, wpid, NULL, (void *)(long)deliver);
+            continue;
+        }
+
+        tracee_state *ts = add_tracee(wpid);
+        if (ts == NULL) {
+            ptrace(PTRACE_SYSCALL, wpid, NULL, NULL);
             continue;
         }
 
         arch_regs_t regs;
-        if (get_regs(child, &regs) == -1) {
-            perror("ptrace(GETREGS)");
-            break;
+        if (get_regs(wpid, &regs) == -1) {
+            ptrace(PTRACE_SYSCALL, wpid, NULL, NULL);
+            continue;
         }
 
-        if (!in_syscall) {
+        char pid_prefix[24] = "";
+        if (follow_forks)
+            snprintf(pid_prefix, sizeof(pid_prefix), "[pid %d] ", wpid);
+
+        if (!ts->in_syscall) {
             /* syscall entry */
-            syscall_no = syscall_no_of(&regs);
+            long syscall_no = syscall_no_of(&regs);
             const char *name = syscall_name(syscall_no);
             unsigned long long raw_args[6] = {
                 arg0(&regs), arg1(&regs), arg2(&regs),
@@ -485,60 +594,60 @@ static void run_tracer(pid_t child) {
 
             const buffer_arg_entry *read_entry = read_arg_lookup(name);
 
-            suppressed = !syscall_allowed(name);
+            ts->suppressed = !syscall_allowed(name);
 
-            if (suppressed) {
+            if (ts->suppressed) {
                 /* filtered out by -e trace=SET — don't print anything,
                  * but still track it through entry/exit like normal so
                  * the toggle stays in sync and pending state from a
                  * *previous* (allowed) read() doesn't leak in. */
-                pending_read_entry = NULL;
+                ts->pending_read_entry = NULL;
             } else if (read_entry != NULL) {
                 /* read()-family: its buffer is unpopulated until the
                  * syscall actually runs, so there's nothing useful
                  * to dereference yet — stash everything and print
                  * the whole line at the exit-stop instead, once we
                  * know the real byte count from the return value. */
-                pending_name = name;
-                memcpy(pending_args, raw_args, sizeof(raw_args));
-                pending_read_entry = read_entry;
+                ts->pending_name = name;
+                memcpy(ts->pending_args, raw_args, sizeof(raw_args));
+                ts->pending_read_entry = read_entry;
             } else {
                 /* everything else prints immediately, same as before:
                  * known path-string args get dereferenced, write()'s
                  * buffer gets dumped, everything unrecognized prints
                  * as a raw hex address/value. */
-                pending_read_entry = NULL;
+                ts->pending_read_entry = NULL;
                 unsigned char str_mask = string_arg_mask(name);
                 const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
 
                 char argbuf[6][STR_ARG_BUF_LEN];
                 for (int i = 0; i < 6; i++) {
                     if (str_mask & (1 << i))
-                        read_child_string(child, raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        read_child_string(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
                     else if (buf_entry != NULL && i == buf_entry->buf_idx)
-                        read_child_buffer(child, raw_args[i], raw_args[buf_entry->len_idx],
+                        read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                            argbuf[i], sizeof(argbuf[i]));
                     else
                         snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", raw_args[i]);
                 }
 
-                printf("%s(%s, %s, %s, %s, %s, %s) ",
-                       name, argbuf[0], argbuf[1], argbuf[2],
+                printf("%s%s(%s, %s, %s, %s, %s, %s) ",
+                       pid_prefix, name, argbuf[0], argbuf[1], argbuf[2],
                        argbuf[3], argbuf[4], argbuf[5]);
                 fflush(stdout);
             }
             call_count++;
-            in_syscall = 1;
+            ts->in_syscall = 1;
         } else {
             /* syscall exit — return value in whichever register the
              * platform uses for it */
             long ret = return_val_of(&regs);
 
-            if (suppressed) {
+            if (ts->suppressed) {
                 /* filtered out — nothing was printed at entry, so
                  * nothing prints here either */
             } else {
-                if (pending_read_entry != NULL) {
+                if (ts->pending_read_entry != NULL) {
                     /* this is the deferred read()-family print: build
                      * the whole "name(args) = ret" line now, using ret
                      * itself as the buffer length — that's the actual
@@ -547,16 +656,16 @@ static void run_tracer(pid_t child) {
                      * only length we can trust at this point. */
                     char argbuf[6][STR_ARG_BUF_LEN];
                     for (int i = 0; i < 6; i++) {
-                        if (i == pending_read_entry->buf_idx && ret > 0)
-                            read_child_buffer(child, pending_args[i], (unsigned long long)ret,
+                        if (i == ts->pending_read_entry->buf_idx && ret > 0)
+                            read_child_buffer(wpid, ts->pending_args[i], (unsigned long long)ret,
                                                argbuf[i], sizeof(argbuf[i]));
                         else
-                            snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", pending_args[i]);
+                            snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", ts->pending_args[i]);
                     }
-                    printf("%s(%s, %s, %s, %s, %s, %s) ",
-                           pending_name, argbuf[0], argbuf[1], argbuf[2],
+                    printf("%s%s(%s, %s, %s, %s, %s, %s) ",
+                           pid_prefix, ts->pending_name, argbuf[0], argbuf[1], argbuf[2],
                            argbuf[3], argbuf[4], argbuf[5]);
-                    pending_read_entry = NULL;
+                    ts->pending_read_entry = NULL;
                 }
 
                 if (ret < 0) {
@@ -566,16 +675,27 @@ static void run_tracer(pid_t child) {
                     printf("= %ld\n", ret);
                 }
             }
-            in_syscall = 0;
+            ts->in_syscall = 0;
         }
+
+        ptrace(PTRACE_SYSCALL, wpid, NULL, NULL);
     }
 }
 
 int main(int argc, char **argv) {
     int argi = 1;
     pid_t attach_pid = -1;
+    int follow_forks = 0;
 
-    while (argi < argc && (strcmp(argv[argi], "-e") == 0 || strcmp(argv[argi], "-p") == 0)) {
+    while (argi < argc && (strcmp(argv[argi], "-e") == 0 ||
+                            strcmp(argv[argi], "-p") == 0 ||
+                            strcmp(argv[argi], "-f") == 0)) {
+        if (strcmp(argv[argi], "-f") == 0) {
+            follow_forks = 1;
+            argi += 1;
+            continue;
+        }
+
         if (strcmp(argv[argi], "-p") == 0) {
             if (argi + 1 >= argc) {
                 fprintf(stderr, "error: -p needs a PID argument\n");
@@ -619,18 +739,20 @@ int main(int argc, char **argv) {
             perror("ptrace(ATTACH)");
             return 1;
         }
-        run_tracer(attach_pid);
+        run_tracer(attach_pid, follow_forks);
         return 0;
     }
 
     if (argi >= argc) {
-        fprintf(stderr, "usage: %s [-e trace=SET] <program> [args...]\n", argv[0]);
-        fprintf(stderr, "       %s [-e trace=SET] -p <pid>\n", argv[0]);
+        fprintf(stderr, "usage: %s [-e trace=SET] [-f] <program> [args...]\n", argv[0]);
+        fprintf(stderr, "       %s [-e trace=SET] [-f] -p <pid>\n", argv[0]);
         fprintf(stderr, "example: %s /bin/echo hello\n", argv[0]);
         fprintf(stderr, "example: %s -e trace=file /bin/cat foo.txt\n", argv[0]);
         fprintf(stderr, "example: %s -p 12345\n", argv[0]);
+        fprintf(stderr, "example: %s -f /bin/sh -c 'echo hi'\n", argv[0]);
         fprintf(stderr, "  SET is a comma-separated mix of categories (file, network,\n");
         fprintf(stderr, "  process) and/or exact syscall names, e.g. trace=network,openat\n");
+        fprintf(stderr, "  -f also traces child processes created via fork/vfork/clone\n");
         return 1;
     }
 
@@ -643,7 +765,7 @@ int main(int argc, char **argv) {
     if (child == 0) {
         run_tracee(&argv[argi]);
     } else {
-        run_tracer(child);
+        run_tracer(child, follow_forks);
     }
 
     return 0;
