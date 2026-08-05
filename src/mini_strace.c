@@ -25,9 +25,7 @@
  * Run:   ./mini-strace /bin/ls -la
  *        ./mini-strace -e trace=file /bin/cat foo.txt
  *        ./mini-strace -e trace=network,openat /bin/curl example.com
- *
- * Next up:
- *   - attach to an already-running process by PID
+ *        ./mini-strace -p 12345
  */
 
 #define _GNU_SOURCE
@@ -575,8 +573,26 @@ static void run_tracer(pid_t child) {
 
 int main(int argc, char **argv) {
     int argi = 1;
+    pid_t attach_pid = -1;
 
-    while (argi < argc && strcmp(argv[argi], "-e") == 0) {
+    while (argi < argc && (strcmp(argv[argi], "-e") == 0 || strcmp(argv[argi], "-p") == 0)) {
+        if (strcmp(argv[argi], "-p") == 0) {
+            if (argi + 1 >= argc) {
+                fprintf(stderr, "error: -p needs a PID argument\n");
+                return 1;
+            }
+            char *endptr;
+            long pid = strtol(argv[argi + 1], &endptr, 10);
+            if (*endptr != '\0' || pid <= 0) {
+                fprintf(stderr, "error: '%s' is not a valid PID\n", argv[argi + 1]);
+                return 1;
+            }
+            attach_pid = (pid_t)pid;
+            argi += 2;
+            continue;
+        }
+
+        /* -e trace=SET */
         if (argi + 1 >= argc) {
             fprintf(stderr, "error: -e needs an argument, e.g. -e trace=file\n");
             return 1;
@@ -591,10 +607,28 @@ int main(int argc, char **argv) {
         argi += 2;
     }
 
+    if (attach_pid != -1) {
+        /* Attaching skips the fork/TRACEME/exec dance entirely: the
+         * target is already running, so PTRACE_ATTACH just sends it
+         * a SIGSTOP and starts tracing in place. That stop shows up
+         * on the very next waitpid() in run_tracer() the same way
+         * the tracee's self-raised SIGSTOP does in the fork+exec
+         * path, so the rest of the tracing loop doesn't need to know
+         * which way the process was acquired. */
+        if (ptrace(PTRACE_ATTACH, attach_pid, NULL, NULL) == -1) {
+            perror("ptrace(ATTACH)");
+            return 1;
+        }
+        run_tracer(attach_pid);
+        return 0;
+    }
+
     if (argi >= argc) {
         fprintf(stderr, "usage: %s [-e trace=SET] <program> [args...]\n", argv[0]);
+        fprintf(stderr, "       %s [-e trace=SET] -p <pid>\n", argv[0]);
         fprintf(stderr, "example: %s /bin/echo hello\n", argv[0]);
         fprintf(stderr, "example: %s -e trace=file /bin/cat foo.txt\n", argv[0]);
+        fprintf(stderr, "example: %s -p 12345\n", argv[0]);
         fprintf(stderr, "  SET is a comma-separated mix of categories (file, network,\n");
         fprintf(stderr, "  process) and/or exact syscall names, e.g. trace=network,openat\n");
         return 1;
