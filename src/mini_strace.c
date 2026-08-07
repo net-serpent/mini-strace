@@ -17,7 +17,9 @@
  * fork()/vfork()/clone() into child processes instead of only ever
  * tracing the one process that was launched; output lines get a
  * "[pid N] " prefix so it's clear which process each line belongs
- * to.
+ * to. Signals delivered to a traced process (crashes, external
+ * kills, ...) get their own "--- SIGNAME (description) ---" line
+ * before being forwarded on, same as real strace.
  *
  * Supports x86-64 and ARM64 (aarch64) Linux. The two architectures
  * have completely different syscall ABIs — different register
@@ -110,7 +112,7 @@ static unsigned char string_arg_mask(const char *syscall) {
  * before the syscall runs, so it can be dereferenced at the same
  * entry-stop as everything else. read()'s buffer is the opposite
  * case (empty until the syscall actually runs) and needs different
- * handling — see the TODO at the top of the file. */
+ * handling — see read_arg_table below. */
 typedef struct {
     const char *name;
     int buf_idx;
@@ -562,6 +564,19 @@ static void run_tracer(pid_t child, int follow_forks) {
              * before/instead of the parent's event notification —
              * either way just track it and let it continue. */
             int deliver = (stopsig != SIGTRAP) ? stopsig : 0;
+            if (deliver != 0) {
+                /* a real signal is about to be delivered — print it
+                 * the way strace does, so a crash (SIGSEGV, SIGABRT,
+                 * ...) or an external kill shows up in the trace
+                 * instead of only being visible later as an opaque
+                 * "killed by signal N" line once the process is
+                 * actually gone. */
+                char prefix[24] = "";
+                if (follow_forks)
+                    snprintf(prefix, sizeof(prefix), "[pid %d] ", wpid);
+                printf("%s--- SIG%s (%s) ---\n", prefix, sigabbrev_np(deliver), sigdescr_np(deliver));
+                fflush(stdout);
+            }
             add_tracee(wpid);
             ptrace(PTRACE_SYSCALL, wpid, NULL, (void *)(long)deliver);
             continue;
