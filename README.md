@@ -52,6 +52,13 @@ you can tell which process it came from:
 ./mini-strace -f -e trace=process /bin/make
 ```
 
+Pass `-T` to time each syscall (wall clock, from entry-stop to
+exit-stop) and append it to the line, e.g. `= 0 <1.000484>`:
+
+```bash
+./mini-strace -T /bin/sleep 1
+```
+
 On macOS:
 
 ```bash

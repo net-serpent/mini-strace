@@ -19,7 +19,9 @@
  * "[pid N] " prefix so it's clear which process each line belongs
  * to. Signals delivered to a traced process (crashes, external
  * kills, ...) get their own "--- SIGNAME (description) ---" line
- * before being forwarded on, same as real strace.
+ * before being forwarded on, same as real strace. Optional -T times
+ * each syscall (wall clock, entry-stop to exit-stop) and appends it
+ * as "<seconds.microseconds>" after the return value.
  *
  * Supports x86-64 and ARM64 (aarch64) Linux. The two architectures
  * have completely different syscall ABIs — different register
@@ -33,6 +35,7 @@
  *        ./mini-strace -e trace=network,openat /bin/curl example.com
  *        ./mini-strace -p 12345
  *        ./mini-strace -f /bin/sh -c 'echo hi'
+ *        ./mini-strace -T /bin/sleep 1
  */
 
 #define _GNU_SOURCE
@@ -45,6 +48,7 @@
 #include <sys/wait.h>
 #include <sys/user.h>
 #include <errno.h>
+#include <time.h>
 
 #if defined(__aarch64__)
 #include <sys/uio.h>
@@ -430,6 +434,7 @@ typedef struct {
     unsigned long long pending_args[6];
     const buffer_arg_entry *pending_read_entry;
     int suppressed;
+    struct timespec entry_time;  /* when this syscall's entry-stop fired, for -T */
 } tracee_state;
 
 static tracee_state tracees[MAX_TRACEES];
@@ -474,7 +479,7 @@ static void remove_tracee(pid_t pid) {
  * the two paths are kept separate below (rather than always running
  * the general multi-pid machinery) so default output/behavior is
  * untouched. */
-static void run_tracer(pid_t child, int follow_forks) {
+static void run_tracer(pid_t child, int follow_forks, int show_timing) {
     int status;
     long call_count = 0;
 
@@ -609,6 +614,9 @@ static void run_tracer(pid_t child, int follow_forks) {
 
             const buffer_arg_entry *read_entry = read_arg_lookup(name);
 
+            if (show_timing)
+                clock_gettime(CLOCK_MONOTONIC, &ts->entry_time);
+
             ts->suppressed = !syscall_allowed(name);
 
             if (ts->suppressed) {
@@ -683,11 +691,20 @@ static void run_tracer(pid_t child, int follow_forks) {
                     ts->pending_read_entry = NULL;
                 }
 
+                char timing_buf[32] = "";
+                if (show_timing) {
+                    struct timespec now;
+                    clock_gettime(CLOCK_MONOTONIC, &now);
+                    double elapsed = (now.tv_sec - ts->entry_time.tv_sec) +
+                                      (now.tv_nsec - ts->entry_time.tv_nsec) / 1e9;
+                    snprintf(timing_buf, sizeof(timing_buf), " <%.6f>", elapsed);
+                }
+
                 if (ret < 0) {
                     const char *ename = strerrorname_np((int)(-ret));
-                    printf("= %ld (%s)\n", ret, ename ? ename : "unknown errno");
+                    printf("= %ld (%s)%s\n", ret, ename ? ename : "unknown errno", timing_buf);
                 } else {
-                    printf("= %ld\n", ret);
+                    printf("= %ld%s\n", ret, timing_buf);
                 }
             }
             ts->in_syscall = 0;
@@ -701,12 +718,20 @@ int main(int argc, char **argv) {
     int argi = 1;
     pid_t attach_pid = -1;
     int follow_forks = 0;
+    int show_timing = 0;
 
     while (argi < argc && (strcmp(argv[argi], "-e") == 0 ||
                             strcmp(argv[argi], "-p") == 0 ||
-                            strcmp(argv[argi], "-f") == 0)) {
+                            strcmp(argv[argi], "-f") == 0 ||
+                            strcmp(argv[argi], "-T") == 0)) {
         if (strcmp(argv[argi], "-f") == 0) {
             follow_forks = 1;
+            argi += 1;
+            continue;
+        }
+
+        if (strcmp(argv[argi], "-T") == 0) {
+            show_timing = 1;
             argi += 1;
             continue;
         }
@@ -754,20 +779,22 @@ int main(int argc, char **argv) {
             perror("ptrace(ATTACH)");
             return 1;
         }
-        run_tracer(attach_pid, follow_forks);
+        run_tracer(attach_pid, follow_forks, show_timing);
         return 0;
     }
 
     if (argi >= argc) {
-        fprintf(stderr, "usage: %s [-e trace=SET] [-f] <program> [args...]\n", argv[0]);
-        fprintf(stderr, "       %s [-e trace=SET] [-f] -p <pid>\n", argv[0]);
+        fprintf(stderr, "usage: %s [-e trace=SET] [-f] [-T] <program> [args...]\n", argv[0]);
+        fprintf(stderr, "       %s [-e trace=SET] [-f] [-T] -p <pid>\n", argv[0]);
         fprintf(stderr, "example: %s /bin/echo hello\n", argv[0]);
         fprintf(stderr, "example: %s -e trace=file /bin/cat foo.txt\n", argv[0]);
         fprintf(stderr, "example: %s -p 12345\n", argv[0]);
         fprintf(stderr, "example: %s -f /bin/sh -c 'echo hi'\n", argv[0]);
+        fprintf(stderr, "example: %s -T /bin/sleep 1\n", argv[0]);
         fprintf(stderr, "  SET is a comma-separated mix of categories (file, network,\n");
         fprintf(stderr, "  process) and/or exact syscall names, e.g. trace=network,openat\n");
         fprintf(stderr, "  -f also traces child processes created via fork/vfork/clone\n");
+        fprintf(stderr, "  -T appends the wall-clock time each syscall took, e.g. <0.000123>\n");
         return 1;
     }
 
@@ -780,7 +807,7 @@ int main(int argc, char **argv) {
     if (child == 0) {
         run_tracee(&argv[argi]);
     } else {
-        run_tracer(child, follow_forks);
+        run_tracer(child, follow_forks, show_timing);
     }
 
     return 0;
