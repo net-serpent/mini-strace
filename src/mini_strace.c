@@ -512,7 +512,7 @@ static summary_entry *summary_lookup_or_add(const char *name) {
     return NULL;  /* table full — extremely diverse syscall usage, drop the rest */
 }
 
-static void print_summary(void) {
+static void print_summary(FILE *out) {
     /* selection sort by total_time descending — table is at most a
      * couple hundred rows, no need for anything fancier */
     for (int i = 0; i < summary_entry_count - 1; i++) {
@@ -536,18 +536,18 @@ static void print_summary(void) {
         grand_errors += summary_table[i].errors;
     }
 
-    fprintf(stderr, "%% time     seconds  usecs/call     calls    errors syscall\n");
-    fprintf(stderr, "------ ----------- ----------- --------- --------- ----------------\n");
+    fprintf(out, "%% time     seconds  usecs/call     calls    errors syscall\n");
+    fprintf(out, "------ ----------- ----------- --------- --------- ----------------\n");
     for (int i = 0; i < summary_entry_count; i++) {
         double pct = grand_total > 0.0 ? (summary_table[i].total_time / grand_total * 100.0) : 0.0;
         long usecs_per_call = summary_table[i].calls > 0
             ? (long)(summary_table[i].total_time * 1e6 / summary_table[i].calls) : 0;
-        fprintf(stderr, "%6.2f %11.6f %11ld %9ld %9ld %s\n",
+        fprintf(out, "%6.2f %11.6f %11ld %9ld %9ld %s\n",
                 pct, summary_table[i].total_time, usecs_per_call,
                 summary_table[i].calls, summary_table[i].errors, summary_table[i].name);
     }
-    fprintf(stderr, "------ ----------- ----------- --------- --------- ----------------\n");
-    fprintf(stderr, "100.00 %11.6f %11s %9ld %9ld total\n",
+    fprintf(out, "------ ----------- ----------- --------- --------- ----------------\n");
+    fprintf(out, "100.00 %11.6f %11s %9ld %9ld total\n",
             grand_total, "", grand_calls, grand_errors);
 }
 
@@ -558,7 +558,8 @@ static void print_summary(void) {
  * the two paths are kept separate below (rather than always running
  * the general multi-pid machinery) so default output/behavior is
  * untouched. */
-static void run_tracer(pid_t child, int follow_forks, int show_timing, int summary_mode) {
+static void run_tracer(pid_t child, int follow_forks, int show_timing, int summary_mode,
+                        FILE *trace_out, FILE *status_out) {
     int status;
     long call_count = 0;
 
@@ -591,17 +592,17 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
             active_count--;
             if (!follow_forks) {
                 if (WIFEXITED(status))
-                    fprintf(stderr, "\n[mini-strace] process exited, code %d, total syscalls: %ld\n",
+                    fprintf(status_out, "\n[mini-strace] process exited, code %d, total syscalls: %ld\n",
                             WEXITSTATUS(status), call_count);
                 else
-                    fprintf(stderr, "\n[mini-strace] process killed by signal %d\n", WTERMSIG(status));
+                    fprintf(status_out, "\n[mini-strace] process killed by signal %d\n", WTERMSIG(status));
             } else {
                 if (WIFEXITED(status))
-                    fprintf(stderr, "\n[mini-strace] pid %d exited, code %d\n", wpid, WEXITSTATUS(status));
+                    fprintf(status_out, "\n[mini-strace] pid %d exited, code %d\n", wpid, WEXITSTATUS(status));
                 else
-                    fprintf(stderr, "\n[mini-strace] pid %d killed by signal %d\n", wpid, WTERMSIG(status));
+                    fprintf(status_out, "\n[mini-strace] pid %d killed by signal %d\n", wpid, WTERMSIG(status));
                 if (active_count <= 0)
-                    fprintf(stderr, "[mini-strace] all tracees exited, total syscalls: %ld\n", call_count);
+                    fprintf(status_out, "[mini-strace] all tracees exited, total syscalls: %ld\n", call_count);
             }
             if (active_count <= 0)
                 break;
@@ -626,7 +627,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
             if (ptrace(PTRACE_GETEVENTMSG, wpid, NULL, &new_pid) != -1) {
                 if (add_tracee((pid_t)new_pid) != NULL) {
                     active_count++;
-                    fprintf(stderr, "[mini-strace] new child pid %ld\n", new_pid);
+                    fprintf(status_out, "[mini-strace] new child pid %ld\n", new_pid);
                 }
             }
             ptrace(PTRACE_SYSCALL, wpid, NULL, NULL);
@@ -658,8 +659,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 char prefix[24] = "";
                 if (follow_forks)
                     snprintf(prefix, sizeof(prefix), "[pid %d] ", wpid);
-                printf("%s--- SIG%s (%s) ---\n", prefix, sigabbrev_np(deliver), sigdescr_np(deliver));
-                fflush(stdout);
+                fprintf(trace_out, "%s--- SIG%s (%s) ---\n", prefix, sigabbrev_np(deliver), sigdescr_np(deliver));
+                fflush(trace_out);
             }
             add_tracee(wpid);
             ptrace(PTRACE_SYSCALL, wpid, NULL, (void *)(long)deliver);
@@ -735,10 +736,10 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", raw_args[i]);
                     }
 
-                    printf("%s%s(%s, %s, %s, %s, %s, %s) ",
-                           pid_prefix, name, argbuf[0], argbuf[1], argbuf[2],
-                           argbuf[3], argbuf[4], argbuf[5]);
-                    fflush(stdout);
+                    fprintf(trace_out, "%s%s(%s, %s, %s, %s, %s, %s) ",
+                            pid_prefix, name, argbuf[0], argbuf[1], argbuf[2],
+                            argbuf[3], argbuf[4], argbuf[5]);
+                    fflush(trace_out);
                 }
             }
             call_count++;
@@ -770,9 +771,9 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             else
                                 snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", ts->pending_args[i]);
                         }
-                        printf("%s%s(%s, %s, %s, %s, %s, %s) ",
-                               pid_prefix, ts->pending_name, argbuf[0], argbuf[1], argbuf[2],
-                               argbuf[3], argbuf[4], argbuf[5]);
+                        fprintf(trace_out, "%s%s(%s, %s, %s, %s, %s, %s) ",
+                                pid_prefix, ts->pending_name, argbuf[0], argbuf[1], argbuf[2],
+                                argbuf[3], argbuf[4], argbuf[5]);
                     }
                     ts->pending_read_entry = NULL;
                 }
@@ -801,9 +802,9 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     }
                 } else if (ret < 0) {
                     const char *ename = strerrorname_np((int)(-ret));
-                    printf("= %ld (%s)%s\n", ret, ename ? ename : "unknown errno", timing_buf);
+                    fprintf(trace_out, "= %ld (%s)%s\n", ret, ename ? ename : "unknown errno", timing_buf);
                 } else {
-                    printf("= %ld%s\n", ret, timing_buf);
+                    fprintf(trace_out, "= %ld%s\n", ret, timing_buf);
                 }
             }
             ts->in_syscall = 0;
@@ -813,7 +814,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
     }
 
     if (summary_mode)
-        print_summary();
+        print_summary(status_out);
 }
 
 int main(int argc, char **argv) {
@@ -822,12 +823,14 @@ int main(int argc, char **argv) {
     int follow_forks = 0;
     int show_timing = 0;
     int summary_mode = 0;
+    const char *output_file = NULL;
 
     while (argi < argc && (strcmp(argv[argi], "-e") == 0 ||
                             strcmp(argv[argi], "-p") == 0 ||
                             strcmp(argv[argi], "-f") == 0 ||
                             strcmp(argv[argi], "-T") == 0 ||
-                            strcmp(argv[argi], "-c") == 0)) {
+                            strcmp(argv[argi], "-c") == 0 ||
+                            strcmp(argv[argi], "-o") == 0)) {
         if (strcmp(argv[argi], "-f") == 0) {
             follow_forks = 1;
             argi += 1;
@@ -843,6 +846,16 @@ int main(int argc, char **argv) {
         if (strcmp(argv[argi], "-c") == 0) {
             summary_mode = 1;
             argi += 1;
+            continue;
+        }
+
+        if (strcmp(argv[argi], "-o") == 0) {
+            if (argi + 1 >= argc) {
+                fprintf(stderr, "error: -o needs a file path\n");
+                return 1;
+            }
+            output_file = argv[argi + 1];
+            argi += 2;
             continue;
         }
 
@@ -877,6 +890,25 @@ int main(int argc, char **argv) {
         argi += 2;
     }
 
+    /* -o redirects both the trace lines (normally stdout) and the
+     * "[mini-strace] ..." status lines (normally stderr) into one
+     * file, same as real strace's -o. The traced program's own
+     * stdin/stdout/stderr are untouched — this fd is just an extra
+     * one sitting alongside them, not a replacement for fd 1/2, so a
+     * fork+exec child inheriting it doesn't change what the child
+     * itself reads from or writes to. */
+    FILE *trace_out = stdout;
+    FILE *status_out = stderr;
+    if (output_file != NULL) {
+        FILE *f = fopen(output_file, "w");
+        if (f == NULL) {
+            perror("fopen");
+            return 1;
+        }
+        trace_out = f;
+        status_out = f;
+    }
+
     if (attach_pid != -1) {
         /* Attaching skips the fork/TRACEME/exec dance entirely: the
          * target is already running, so PTRACE_ATTACH just sends it
@@ -889,24 +921,26 @@ int main(int argc, char **argv) {
             perror("ptrace(ATTACH)");
             return 1;
         }
-        run_tracer(attach_pid, follow_forks, show_timing, summary_mode);
+        run_tracer(attach_pid, follow_forks, show_timing, summary_mode, trace_out, status_out);
         return 0;
     }
 
     if (argi >= argc) {
-        fprintf(stderr, "usage: %s [-e trace=SET] [-f] [-T] [-c] <program> [args...]\n", argv[0]);
-        fprintf(stderr, "       %s [-e trace=SET] [-f] [-T] [-c] -p <pid>\n", argv[0]);
+        fprintf(stderr, "usage: %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] <program> [args...]\n", argv[0]);
+        fprintf(stderr, "       %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] -p <pid>\n", argv[0]);
         fprintf(stderr, "example: %s /bin/echo hello\n", argv[0]);
         fprintf(stderr, "example: %s -e trace=file /bin/cat foo.txt\n", argv[0]);
         fprintf(stderr, "example: %s -p 12345\n", argv[0]);
         fprintf(stderr, "example: %s -f /bin/sh -c 'echo hi'\n", argv[0]);
         fprintf(stderr, "example: %s -T /bin/sleep 1\n", argv[0]);
         fprintf(stderr, "example: %s -c /bin/ls\n", argv[0]);
+        fprintf(stderr, "example: %s -o trace.log /bin/ls\n", argv[0]);
         fprintf(stderr, "  SET is a comma-separated mix of categories (file, network,\n");
         fprintf(stderr, "  process) and/or exact syscall names, e.g. trace=network,openat\n");
         fprintf(stderr, "  -f also traces child processes created via fork/vfork/clone\n");
         fprintf(stderr, "  -T appends the wall-clock time each syscall took, e.g. <0.000123>\n");
         fprintf(stderr, "  -c prints a per-syscall summary table instead of a line per call\n");
+        fprintf(stderr, "  -o writes trace output to FILE instead of stdout/stderr\n");
         return 1;
     }
 
@@ -919,7 +953,7 @@ int main(int argc, char **argv) {
     if (child == 0) {
         run_tracee(&argv[argi]);
     } else {
-        run_tracer(child, follow_forks, show_timing, summary_mode);
+        run_tracer(child, follow_forks, show_timing, summary_mode, trace_out, status_out);
     }
 
     return 0;

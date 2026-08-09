@@ -76,6 +76,15 @@ errors, and time spent grouped by syscall name, sorted slowest-first:
 100.00    0.000190                    12         1 total
 ```
 
+Pass `-o FILE` to send the trace (and the `[mini-strace] ...` status
+lines) to a file instead of stdout/stderr. The traced program's own
+stdin/stdout/stderr are untouched, so its actual output still shows
+up on your terminal same as always:
+
+```bash
+./mini-strace -o trace.log /bin/echo hello
+```
+
 On macOS:
 
 ```bash
@@ -142,6 +151,13 @@ each call into a running total keyed by syscall name instead of
 printing a line — a fixed-size table (linear-scan lookup, same style
 as everywhere else in this file), selection-sorted by total time once
 the trace ends, then printed as one table.
+
+`-o` opens the file in the tracer itself and threads that `FILE *`
+through in place of the hardcoded `stdout`/`stderr` everything else
+used to print to. Opening it before `fork()` means an exec'd tracee
+inherits the fd too, but only as an extra unused one sitting alongside
+its real fd 0/1/2 — nothing redirects *those*, so the tracee's own
+I/O is unaffected either way.
 
 ## Requirements
 
