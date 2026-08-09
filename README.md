@@ -59,6 +59,23 @@ exit-stop) and append it to the line, e.g. `= 0 <1.000484>`:
 ./mini-strace -T /bin/sleep 1
 ```
 
+Pass `-c` for a summary instead of a line per call: total calls,
+errors, and time spent grouped by syscall name, sorted slowest-first:
+
+```bash
+./mini-strace -c /bin/ls
+```
+
+```
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 42.20    0.000080          20         4         0 close
+ 20.15    0.000038          12         3         0 fstat
+ 14.34    0.000027          13         2         0 openat
+------ ----------- ----------- --------- --------- ----------------
+100.00    0.000190                    12         1 total
+```
+
 On macOS:
 
 ```bash
@@ -119,6 +136,12 @@ running is visible before it returns, same as real strace), a
 different process's line can land in between them when several
 processes are stopped near the same time — cosmetic only, the data
 itself is still all there.
+
+`-c` reuses the same entry/exit timestamps `-T` records, just folds
+each call into a running total keyed by syscall name instead of
+printing a line — a fixed-size table (linear-scan lookup, same style
+as everywhere else in this file), selection-sorted by total time once
+the trace ends, then printed as one table.
 
 ## Requirements
 
