@@ -85,6 +85,14 @@ up on your terminal same as always:
 ./mini-strace -o trace.log /bin/echo hello
 ```
 
+String and buffer arguments are truncated at 200 bytes by default
+(shown with a trailing `...`). Pass `-s SIZE` to raise or lower that:
+
+```bash
+./mini-strace -s 4 /bin/echo hello-world
+# write(1, "hell"..., 11) = 11
+```
+
 On macOS:
 
 ```bash
@@ -158,6 +166,17 @@ used to print to. Opening it before `fork()` means an exec'd tracee
 inherits the fd too, but only as an extra unused one sitting alongside
 its real fd 0/1/2 — nothing redirects *those*, so the tracee's own
 I/O is unaffected either way.
+
+`-s` doesn't resize anything at runtime — the raw-read and escaped-
+output buffers are still fixed-size stack arrays, just sized 1024
+bytes (up from the old hardcoded 200) so `-s` has room to raise the
+cap. What actually changes at runtime is `max_str_len`, which caps
+how much of that fixed buffer gets used. One wrinkle: `ptrace(2)`
+only ever reads whole machine words (8 bytes), so a `-s` value
+smaller than that would make the read loop exit before reading
+anything at all if it were bounded by the raw byte count directly —
+the read window gets rounded up to a word boundary instead, and the
+*displayed* length is clamped to the real requested size afterward.
 
 ## Requirements
 

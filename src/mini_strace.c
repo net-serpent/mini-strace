@@ -25,7 +25,11 @@
  * replaces all of that per-call output with a single summary table
  * at the end — calls/errors/total time grouped by syscall name,
  * sorted slowest-first — reusing the same entry/exit timestamps -T
- * uses.
+ * uses. Optional -o FILE sends the trace (and the "[mini-strace] ..."
+ * status lines) to a file instead of stdout/stderr, without touching
+ * the traced program's own stdin/stdout/stderr. Optional -s SIZE
+ * caps how many raw bytes of a string/buffer argument get read and
+ * shown before truncating with "..." (default 200).
  *
  * Supports x86-64 and ARM64 (aarch64) Linux. The two architectures
  * have completely different syscall ABIs — different register
@@ -41,6 +45,8 @@
  *        ./mini-strace -f /bin/sh -c 'echo hi'
  *        ./mini-strace -T /bin/sleep 1
  *        ./mini-strace -c /bin/ls
+ *        ./mini-strace -o trace.log /bin/ls
+ *        ./mini-strace -s 4 /bin/echo hello
  */
 
 #define _GNU_SOURCE
@@ -237,7 +243,17 @@ static int syscall_allowed(const char *name) {
     return 0;
 }
 
-#define STR_ARG_BUF_LEN 200
+/* Physical capacity of the raw read window and the escaped-output
+ * buffer for string/buffer arguments — a hard ceiling, not the
+ * actual truncation point a user sees day to day. -s SIZE (below)
+ * picks how many raw bytes actually get shown, up to this cap. */
+#define STR_ARG_BUF_LEN 1024
+
+/* Default -s value: how many raw bytes of a string/buffer argument
+ * get read and shown before truncating with "...". Matches the old
+ * hardcoded STR_ARG_BUF_LEN so default output is unchanged; -s can
+ * raise or lower it, up to STR_ARG_BUF_LEN. */
+static size_t max_str_len = 200;
 
 /* Reads a NUL-terminated string out of the traced process's address
  * space, one machine word at a time, via PTRACE_PEEKDATA — the
@@ -255,9 +271,17 @@ static void read_child_string(pid_t pid, unsigned long long addr, char *out, siz
     }
 
     unsigned char raw[STR_ARG_BUF_LEN];
+    /* PTRACE_PEEKDATA only ever reads whole words, so the read window
+     * has to round max_str_len up to a word boundary — otherwise a
+     * -s value smaller than sizeof(long) would make the loop below
+     * exit before reading anything at all. The actual *displayed*
+     * length still gets clamped to max_str_len afterward. */
+    size_t read_cap = ((max_str_len + sizeof(long) - 1) / sizeof(long)) * sizeof(long);
+    if (read_cap > sizeof(raw))
+        read_cap = sizeof(raw);
     size_t got = 0;
 
-    while (got + sizeof(long) <= sizeof(raw)) {
+    while (got + sizeof(long) <= read_cap) {
         errno = 0;
         long word = ptrace(PTRACE_PEEKDATA, pid, (void *)(addr + got), NULL);
         if (word == -1 && errno != 0)
@@ -283,6 +307,10 @@ static void read_child_string(pid_t pid, unsigned long long addr, char *out, siz
     while (len < got && raw[len] != '\0')
         len++;
     int truncated = (len == got);  /* string may continue past our read window */
+    if (len > max_str_len) {
+        len = max_str_len;  /* -s truncation, even though a NUL exists further in */
+        truncated = 1;
+    }
 
     size_t oi = 0;
     if (oi < out_size) out[oi++] = '"';
@@ -320,7 +348,8 @@ static void read_child_buffer(pid_t pid, unsigned long long addr, unsigned long 
         return;
     }
 
-    size_t want = (len < STR_ARG_BUF_LEN) ? (size_t)len : STR_ARG_BUF_LEN;
+    size_t cap = (max_str_len < STR_ARG_BUF_LEN) ? max_str_len : STR_ARG_BUF_LEN;
+    size_t want = (len < cap) ? (size_t)len : cap;
     unsigned char raw[STR_ARG_BUF_LEN];
     size_t got = 0;
 
@@ -830,7 +859,8 @@ int main(int argc, char **argv) {
                             strcmp(argv[argi], "-f") == 0 ||
                             strcmp(argv[argi], "-T") == 0 ||
                             strcmp(argv[argi], "-c") == 0 ||
-                            strcmp(argv[argi], "-o") == 0)) {
+                            strcmp(argv[argi], "-o") == 0 ||
+                            strcmp(argv[argi], "-s") == 0)) {
         if (strcmp(argv[argi], "-f") == 0) {
             follow_forks = 1;
             argi += 1;
@@ -855,6 +885,22 @@ int main(int argc, char **argv) {
                 return 1;
             }
             output_file = argv[argi + 1];
+            argi += 2;
+            continue;
+        }
+
+        if (strcmp(argv[argi], "-s") == 0) {
+            if (argi + 1 >= argc) {
+                fprintf(stderr, "error: -s needs a size argument\n");
+                return 1;
+            }
+            char *endptr;
+            long size = strtol(argv[argi + 1], &endptr, 10);
+            if (*endptr != '\0' || size < 1) {
+                fprintf(stderr, "error: '%s' is not a valid size\n", argv[argi + 1]);
+                return 1;
+            }
+            max_str_len = (size_t)size < (size_t)STR_ARG_BUF_LEN ? (size_t)size : (size_t)STR_ARG_BUF_LEN;
             argi += 2;
             continue;
         }
@@ -926,8 +972,8 @@ int main(int argc, char **argv) {
     }
 
     if (argi >= argc) {
-        fprintf(stderr, "usage: %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] <program> [args...]\n", argv[0]);
-        fprintf(stderr, "       %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] -p <pid>\n", argv[0]);
+        fprintf(stderr, "usage: %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] [-s SIZE] <program> [args...]\n", argv[0]);
+        fprintf(stderr, "       %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] [-s SIZE] -p <pid>\n", argv[0]);
         fprintf(stderr, "example: %s /bin/echo hello\n", argv[0]);
         fprintf(stderr, "example: %s -e trace=file /bin/cat foo.txt\n", argv[0]);
         fprintf(stderr, "example: %s -p 12345\n", argv[0]);
@@ -935,12 +981,15 @@ int main(int argc, char **argv) {
         fprintf(stderr, "example: %s -T /bin/sleep 1\n", argv[0]);
         fprintf(stderr, "example: %s -c /bin/ls\n", argv[0]);
         fprintf(stderr, "example: %s -o trace.log /bin/ls\n", argv[0]);
+        fprintf(stderr, "example: %s -s 4 /bin/echo hello\n", argv[0]);
         fprintf(stderr, "  SET is a comma-separated mix of categories (file, network,\n");
         fprintf(stderr, "  process) and/or exact syscall names, e.g. trace=network,openat\n");
         fprintf(stderr, "  -f also traces child processes created via fork/vfork/clone\n");
         fprintf(stderr, "  -T appends the wall-clock time each syscall took, e.g. <0.000123>\n");
         fprintf(stderr, "  -c prints a per-syscall summary table instead of a line per call\n");
         fprintf(stderr, "  -o writes trace output to FILE instead of stdout/stderr\n");
+        fprintf(stderr, "  -s caps string/buffer args at SIZE bytes before truncating with"
+                        " \"...\" (default 200, max %d)\n", STR_ARG_BUF_LEN);
         return 1;
     }
 
