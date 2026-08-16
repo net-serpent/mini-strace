@@ -93,6 +93,15 @@ String and buffer arguments are truncated at 200 bytes by default
 # write(1, "hell"..., 11) = 11
 ```
 
+Pass `-y` to resolve file descriptor arguments to what they actually
+point to, via `/proc/pid/fd/N`:
+
+```bash
+./mini-strace -y /bin/cat /etc/hostname
+# openat(0xffffff9c, "/etc/hostname", 0x0, 0x0, 0x0, 0x0) = 3
+# read(3</etc/hostname>, "myhost\n"..., 0x20000, 0x1, 0x0, ...) = 7
+```
+
 On macOS:
 
 ```bash
@@ -177,6 +186,15 @@ smaller than that would make the read loop exit before reading
 anything at all if it were bounded by the raw byte count directly —
 the read window gets rounded up to a word boundary instead, and the
 *displayed* length is clamped to the real requested size afterward.
+
+`-y` resolves a fd argument via `readlink()` on `/proc/pid/fd/N` —
+that symlink target is either a real path, or a description like
+`socket:[12345]`/`pipe:[12345]` for fds that aren't backed by a path
+at all, which `readlink()` returns as plain text either way. A second
+fixed-size table (same shape as the one driving string-argument
+dereferencing) says which argument slots are fds per syscall;
+negative values (`AT_FDCWD` and friends passed as a *at() syscall's
+dirfd) are left alone rather than treated as a real fd number.
 
 ## Requirements
 

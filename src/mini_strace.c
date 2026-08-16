@@ -29,7 +29,10 @@
  * status lines) to a file instead of stdout/stderr, without touching
  * the traced program's own stdin/stdout/stderr. Optional -s SIZE
  * caps how many raw bytes of a string/buffer argument get read and
- * shown before truncating with "..." (default 200).
+ * shown before truncating with "..." (default 200). Optional -y
+ * resolves file descriptor arguments to whatever they point to via
+ * /proc/pid/fd/N, e.g. "read(3</etc/passwd>, ...)" instead of just
+ * "read(3, ...)".
  *
  * Supports x86-64 and ARM64 (aarch64) Linux. The two architectures
  * have completely different syscall ABIs — different register
@@ -47,6 +50,7 @@
  *        ./mini-strace -c /bin/ls
  *        ./mini-strace -o trace.log /bin/ls
  *        ./mini-strace -s 4 /bin/echo hello
+ *        ./mini-strace -y /bin/cat /etc/hostname
  */
 
 #define _GNU_SOURCE
@@ -118,6 +122,105 @@ static unsigned char string_arg_mask(const char *syscall) {
             return string_arg_table[i].str_args;
     }
     return 0;
+}
+
+/* Which arguments of which syscalls are file descriptors, same
+ * bitmask-over-slots-0-5 shape as string_arg_table — used by -y to
+ * resolve a raw fd number to what it actually points to. Covers the
+ * common fd-taking syscalls; *at() syscalls' dirfd is included too,
+ * even though it's very often AT_FDCWD (a negative sentinel, not a
+ * real fd) — resolve_fd_path() below just skips negative values. */
+static const string_arg_entry fd_arg_table[] = {
+    { "read",         0x01 },
+    { "write",        0x01 },
+    { "pread64",      0x01 },
+    { "pwrite64",     0x01 },
+    { "close",        0x01 },
+    { "fstat",        0x01 },
+    { "lseek",        0x01 },
+    { "ioctl",        0x01 },
+    { "fcntl",        0x01 },
+    { "dup",          0x01 },
+    { "dup2",         0x03 },  /* args 0 and 1 */
+    { "dup3",         0x03 },
+    { "fchmod",       0x01 },
+    { "fchown",       0x01 },
+    { "ftruncate",    0x01 },
+    { "fstatfs",      0x01 },
+    { "fsync",        0x01 },
+    { "fdatasync",    0x01 },
+    { "flock",        0x01 },
+    { "openat",       0x01 },
+    { "faccessat",    0x01 },
+    { "faccessat2",   0x01 },
+    { "unlinkat",     0x01 },
+    { "mkdirat",      0x01 },
+    { "renameat",     0x05 },  /* args 0 and 2 */
+    { "renameat2",    0x05 },
+    { "newfstatat",   0x01 },
+    { "readlinkat",   0x01 },
+    { "fchmodat",     0x01 },
+    { "fchownat",     0x01 },
+    { "accept",       0x01 },
+    { "accept4",      0x01 },
+    { "bind",         0x01 },
+    { "listen",       0x01 },
+    { "connect",      0x01 },
+    { "getsockname",  0x01 },
+    { "getpeername",  0x01 },
+    { "setsockopt",   0x01 },
+    { "getsockopt",   0x01 },
+    { "shutdown",     0x01 },
+    { "sendto",       0x01 },
+    { "recvfrom",     0x01 },
+    { "sendmsg",      0x01 },
+    { "recvmsg",      0x01 },
+    { NULL,           0x00 },
+};
+
+static unsigned char fd_arg_mask(const char *syscall) {
+    for (int i = 0; fd_arg_table[i].name != NULL; i++) {
+        if (strcmp(fd_arg_table[i].name, syscall) == 0)
+            return fd_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Resolves fd to whatever it points to via /proc/pid/fd/N, which is
+ * a symlink to the real path (or "socket:[12345]", "pipe:[12345]",
+ * etc. for non-path fds — readlink() returns that text as-is, which
+ * is exactly what real strace shows too). Negative fd (AT_FDCWD and
+ * friends) and any readlink failure (already closed, fd genuinely
+ * invalid, ...) just report "no path", not an error — resolving a
+ * fd to a path is inherently best-effort. */
+static int resolve_fd_path(pid_t pid, long fd, char *out, size_t out_size) {
+    if (fd < 0)
+        return 0;
+    char linkpath[64];
+    snprintf(linkpath, sizeof(linkpath), "/proc/%d/fd/%ld", (int)pid, fd);
+    ssize_t n = readlink(linkpath, out, out_size - 1);
+    if (n < 0)
+        return 0;
+    out[n] = '\0';
+    return 1;
+}
+
+/* Formats an argument that isn't a known string/buffer: plain hex,
+ * same as always, unless it's a fd slot under -y and resolve_fd_path
+ * finds something — then "<path>" gets appended after the hex value,
+ * e.g. "0x3<socket:[12345]>". is_fd_arg is 0 whenever -y isn't
+ * active, so this collapses back to the plain-hex-only path by
+ * default. */
+static void format_hex_or_fd_arg(pid_t pid, unsigned long long raw, int is_fd_arg,
+                                  char *out, size_t out_size) {
+    if (is_fd_arg) {
+        char path[192];
+        if (resolve_fd_path(pid, (long)raw, path, sizeof(path))) {
+            snprintf(out, out_size, "0x%llx<%s>", raw, path);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", raw);
 }
 
 /* Syscalls whose input is a raw (not NUL-terminated) byte buffer,
@@ -588,7 +691,7 @@ static void print_summary(FILE *out) {
  * the general multi-pid machinery) so default output/behavior is
  * untouched. */
 static void run_tracer(pid_t child, int follow_forks, int show_timing, int summary_mode,
-                        FILE *trace_out, FILE *status_out) {
+                        int show_fd_paths, FILE *trace_out, FILE *status_out) {
     int status;
     long call_count = 0;
 
@@ -752,6 +855,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_read_entry = NULL;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
+                    unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
 
                     char argbuf[6][STR_ARG_BUF_LEN];
@@ -762,7 +866,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));
                         else
-                            snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", raw_args[i]);
+                            format_hex_or_fd_arg(wpid, raw_args[i], fd_mask & (1 << i),
+                                                  argbuf[i], sizeof(argbuf[i]));
                     }
 
                     fprintf(trace_out, "%s%s(%s, %s, %s, %s, %s, %s) ",
@@ -792,13 +897,15 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                      * entirely under -c, which never prints per-call
                      * lines. */
                     if (!summary_mode) {
+                        unsigned char fd_mask = show_fd_paths ? fd_arg_mask(ts->pending_name) : 0;
                         char argbuf[6][STR_ARG_BUF_LEN];
                         for (int i = 0; i < 6; i++) {
                             if (i == ts->pending_read_entry->buf_idx && ret > 0)
                                 read_child_buffer(wpid, ts->pending_args[i], (unsigned long long)ret,
                                                    argbuf[i], sizeof(argbuf[i]));
                             else
-                                snprintf(argbuf[i], sizeof(argbuf[i]), "0x%llx", ts->pending_args[i]);
+                                format_hex_or_fd_arg(wpid, ts->pending_args[i], fd_mask & (1 << i),
+                                                      argbuf[i], sizeof(argbuf[i]));
                         }
                         fprintf(trace_out, "%s%s(%s, %s, %s, %s, %s, %s) ",
                                 pid_prefix, ts->pending_name, argbuf[0], argbuf[1], argbuf[2],
@@ -852,6 +959,7 @@ int main(int argc, char **argv) {
     int follow_forks = 0;
     int show_timing = 0;
     int summary_mode = 0;
+    int show_fd_paths = 0;
     const char *output_file = NULL;
 
     while (argi < argc && (strcmp(argv[argi], "-e") == 0 ||
@@ -860,9 +968,16 @@ int main(int argc, char **argv) {
                             strcmp(argv[argi], "-T") == 0 ||
                             strcmp(argv[argi], "-c") == 0 ||
                             strcmp(argv[argi], "-o") == 0 ||
-                            strcmp(argv[argi], "-s") == 0)) {
+                            strcmp(argv[argi], "-s") == 0 ||
+                            strcmp(argv[argi], "-y") == 0)) {
         if (strcmp(argv[argi], "-f") == 0) {
             follow_forks = 1;
+            argi += 1;
+            continue;
+        }
+
+        if (strcmp(argv[argi], "-y") == 0) {
+            show_fd_paths = 1;
             argi += 1;
             continue;
         }
@@ -967,13 +1082,13 @@ int main(int argc, char **argv) {
             perror("ptrace(ATTACH)");
             return 1;
         }
-        run_tracer(attach_pid, follow_forks, show_timing, summary_mode, trace_out, status_out);
+        run_tracer(attach_pid, follow_forks, show_timing, summary_mode, show_fd_paths, trace_out, status_out);
         return 0;
     }
 
     if (argi >= argc) {
-        fprintf(stderr, "usage: %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] [-s SIZE] <program> [args...]\n", argv[0]);
-        fprintf(stderr, "       %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] [-s SIZE] -p <pid>\n", argv[0]);
+        fprintf(stderr, "usage: %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] [-s SIZE] [-y] <program> [args...]\n", argv[0]);
+        fprintf(stderr, "       %s [-e trace=SET] [-f] [-T] [-c] [-o FILE] [-s SIZE] [-y] -p <pid>\n", argv[0]);
         fprintf(stderr, "example: %s /bin/echo hello\n", argv[0]);
         fprintf(stderr, "example: %s -e trace=file /bin/cat foo.txt\n", argv[0]);
         fprintf(stderr, "example: %s -p 12345\n", argv[0]);
@@ -982,6 +1097,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "example: %s -c /bin/ls\n", argv[0]);
         fprintf(stderr, "example: %s -o trace.log /bin/ls\n", argv[0]);
         fprintf(stderr, "example: %s -s 4 /bin/echo hello\n", argv[0]);
+        fprintf(stderr, "example: %s -y /bin/cat /etc/hostname\n", argv[0]);
         fprintf(stderr, "  SET is a comma-separated mix of categories (file, network,\n");
         fprintf(stderr, "  process) and/or exact syscall names, e.g. trace=network,openat\n");
         fprintf(stderr, "  -f also traces child processes created via fork/vfork/clone\n");
@@ -990,6 +1106,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "  -o writes trace output to FILE instead of stdout/stderr\n");
         fprintf(stderr, "  -s caps string/buffer args at SIZE bytes before truncating with"
                         " \"...\" (default 200, max %d)\n", STR_ARG_BUF_LEN);
+        fprintf(stderr, "  -y resolves file descriptor args to their path, e.g. 3</etc/hosts>\n");
         return 1;
     }
 
@@ -1002,7 +1119,7 @@ int main(int argc, char **argv) {
     if (child == 0) {
         run_tracee(&argv[argi]);
     } else {
-        run_tracer(child, follow_forks, show_timing, summary_mode, trace_out, status_out);
+        run_tracer(child, follow_forks, show_timing, summary_mode, show_fd_paths, trace_out, status_out);
     }
 
     return 0;
