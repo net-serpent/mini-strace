@@ -186,6 +186,25 @@ static unsigned char fd_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which arguments are argv[]/envp[]-style NULL-terminated arrays of
+ * C-string pointers — just execve/execveat's argv and envp today.
+ * Same bitmask-over-slots-0-5 shape as string_arg_table; read via
+ * read_child_argv() below instead of read_child_string() since these
+ * are arrays of pointers, not a single string. */
+static const string_arg_entry argv_arg_table[] = {
+    { "execve",    0x06 },  /* args 1 (argv) and 2 (envp) */
+    { "execveat",  0x0c },  /* args 2 (argv) and 3 (envp) */
+    { NULL,        0x00 },
+};
+
+static unsigned char argv_arg_mask(const char *syscall) {
+    for (int i = 0; argv_arg_table[i].name != NULL; i++) {
+        if (strcmp(argv_arg_table[i].name, syscall) == 0)
+            return argv_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Resolves fd to whatever it points to via /proc/pid/fd/N, which is
  * a symlink to the real path (or "socket:[12345]", "pipe:[12345]",
  * etc. for non-path fds — readlink() returns that text as-is, which
@@ -435,6 +454,62 @@ static void read_child_string(pid_t pid, unsigned long long addr, char *out, siz
         memcpy(out + oi, "...", 3);
         oi += 3;
     }
+    if (oi < out_size) out[oi] = '\0';
+    else out[out_size - 1] = '\0';
+}
+
+/* Max entries read out of an argv[]/envp[] array before giving up
+ * and marking it truncated — bounds both the ptrace call count and
+ * the output line length for processes with huge environments. */
+#define MAX_ARGV_ITEMS 32
+
+/* Reads a NULL-terminated array of char* (execve's argv/envp) and
+ * renders it as "[\"a\", \"b\", ...]", reusing read_child_string()
+ * for each element. Each pointer is fetched with its own
+ * PTRACE_PEEKDATA the same way read_child_string reads string bytes
+ * — a word at a time, since that's the only unit ptrace deals in. */
+static void read_child_argv(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    size_t oi = 0;
+    if (oi < out_size) out[oi++] = '[';
+
+    int count = 0;
+    int truncated = 0;
+    for (; count < MAX_ARGV_ITEMS; count++) {
+        errno = 0;
+        long ptr = ptrace(PTRACE_PEEKDATA, pid, (void *)(addr + (unsigned long long)count * sizeof(long)), NULL);
+        if (ptr == -1 && errno != 0)
+            break;  /* unmapped/invalid address — stop, use what we have */
+        if (ptr == 0)
+            break;  /* NULL terminator — normal end of the array */
+
+        char item[STR_ARG_BUF_LEN];
+        read_child_string(pid, (unsigned long long)ptr, item, sizeof(item));
+
+        if (count > 0 && oi + 2 < out_size) {
+            out[oi++] = ',';
+            out[oi++] = ' ';
+        }
+        size_t item_len = strlen(item);
+        if (oi + item_len < out_size) {
+            memcpy(out + oi, item, item_len);
+            oi += item_len;
+        }
+
+        if (count == MAX_ARGV_ITEMS - 1)
+            truncated = 1;  /* hit our cap with a real (non-NULL) entry — array may continue past it */
+    }
+
+    if (truncated && oi + 5 < out_size) {
+        memcpy(out + oi, ", ...", 5);
+        oi += 5;
+    }
+
+    if (oi < out_size) out[oi++] = ']';
     if (oi < out_size) out[oi] = '\0';
     else out[out_size - 1] = '\0';
 }
@@ -855,6 +930,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_read_entry = NULL;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
+                    unsigned char argv_mask = argv_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
 
@@ -862,6 +938,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     for (int i = 0; i < 6; i++) {
                         if (str_mask & (1 << i))
                             read_child_string(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (argv_mask & (1 << i))
+                            read_child_argv(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));

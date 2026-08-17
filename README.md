@@ -8,7 +8,8 @@ Traces a target program and prints every syscall: name, arguments,
 return value. Failed calls show the errno name (`ENOENT`, not `2`).
 A handful of common syscalls get extra treatment `open`/`stat`/
 `execve` and friends show their path argument as an actual string
-instead of a pointer, and `read`/`write` show the bytes they're
+instead of a pointer, `execve`/`execveat` show their `argv`/`envp`
+arrays decoded too, and `read`/`write` show the bytes they're
 moving. You can also narrow the trace down with `-e trace=SET`,
 where SET is a comma-separated mix of categories (`file`, `network`,
 `process`) and/or exact syscall names: `-e trace=file` shows only
@@ -16,7 +17,7 @@ filesystem calls, `-e trace=network,openat` shows networking plus
 that one specific syscall:
 
 ```
-execve("/bin/cat", 0x7fff39fbada0, 0x7fff39fbadc0, 0x0, 0xffffffff, 0x7f45c4f4c740) = 0
+execve("/bin/cat", ["cat", "foo.txt"], ["PATH=/usr/bin", "HOME=/root"], 0xffffffff, 0x7f45c4f4c740) = 0
 access("/etc/ld.so.preload", 0x4, 0x556158984d10, 0x22, 0x7ff5eca8b000, 0x7ff5ecac1440) = -2 (ENOENT)
 openat(0xffffff9c, "/etc/ld.so.cache", 0x80000, 0x0, 0x0, 0x0) = 3
 openat(0xffffff9c, "/tmp/somefile.txt", 0x0, 0x0, 0xffffffff, 0x0) = 3
@@ -195,6 +196,14 @@ fixed-size table (same shape as the one driving string-argument
 dereferencing) says which argument slots are fds per syscall;
 negative values (`AT_FDCWD` and friends passed as a *at() syscall's
 dirfd) are left alone rather than treated as a real fd number.
+
+`execve`/`execveat`'s `argv`/`envp` decoding walks the pointer array
+itself — each slot is its own `char*`, fetched with its own
+`PTRACE_PEEKDATA`, then handed to the same string-reading logic
+everything else uses (so it respects `-s` per element too). Capped at
+32 entries so a huge environment can't blow up the line length or the
+ptrace call count; a `...` at the end means the array kept going past
+that cap.
 
 ## Requirements
 
