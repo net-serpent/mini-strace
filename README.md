@@ -7,14 +7,14 @@ A stripped-down clone of `strace`, built on Linux's `ptrace(2)` API.
 Traces a target program and prints every syscall: name, arguments,
 return value. Failed calls show the errno name (`ENOENT`, not `2`).
 A handful of common syscalls get extra treatment `open`/`stat`/
-`execve` and friends show their path argument as an actual string
-instead of a pointer, `execve`/`execveat` show their `argv`/`envp`
-arrays decoded too, and `read`/`write` show the bytes they're
-moving. You can also narrow the trace down with `-e trace=SET`,
-where SET is a comma-separated mix of categories (`file`, `network`,
-`process`) and/or exact syscall names: `-e trace=file` shows only
-filesystem calls, `-e trace=network,openat` shows networking plus
-that one specific syscall:
+`execve`/`symlink`/`link`/`mount` and friends show their path
+arguments as actual strings instead of pointers, `execve`/`execveat`
+show their `argv`/`envp` arrays decoded too, and `read`/`write` show
+the bytes they're moving. You can also narrow the trace down with
+`-e trace=SET`, where SET is a comma-separated mix of categories
+(`file`, `network`, `process`) and/or exact syscall names:
+`-e trace=file` shows only filesystem calls, `-e trace=network,openat`
+shows networking plus that one specific syscall:
 
 ```
 execve("/bin/cat", ["cat", "foo.txt"], ["PATH=/usr/bin", "HOME=/root"], 0xffffffff, 0x7f45c4f4c740) = 0

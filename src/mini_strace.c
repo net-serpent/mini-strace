@@ -113,6 +113,17 @@ static const string_arg_entry string_arg_table[] = {
     { "fchownat",    0x02 },
     { "truncate",    0x01 },
     { "statfs",      0x01 },
+    { "symlink",     0x03 },  /* args 0 and 1 */
+    { "symlinkat",   0x05 },  /* args 0 (target) and 2 (linkpath) */
+    { "link",        0x03 },  /* args 0 and 1 */
+    { "linkat",      0x0a },  /* args 1 and 3 */
+    { "mount",       0x07 },  /* args 0 (source), 1 (target), 2 (fstype) */
+    { "umount2",     0x01 },
+    { "chroot",      0x01 },
+    { "pivot_root",  0x03 },  /* args 0 and 1 */
+    { "utime",       0x01 },
+    { "utimes",      0x01 },
+    { "futimesat",   0x02 },
     { NULL,          0x00 },
 };
 
@@ -161,6 +172,9 @@ static const string_arg_entry fd_arg_table[] = {
     { "readlinkat",   0x01 },
     { "fchmodat",     0x01 },
     { "fchownat",     0x01 },
+    { "symlinkat",    0x02 },  /* arg 1 (newdirfd) */
+    { "linkat",       0x05 },  /* args 0 (olddirfd) and 2 (newdirfd) */
+    { "futimesat",    0x01 },
     { "accept",       0x01 },
     { "accept4",      0x01 },
     { "bind",         0x01 },
@@ -305,6 +319,8 @@ static const char *file_syscalls[] = {
     "renameat", "renameat2", "mkdir", "mkdirat", "rmdir", "chdir",
     "chmod", "fchmodat", "chown", "lchown", "fchownat", "truncate",
     "readlink", "readlinkat", "statfs", "lseek", "getcwd", "creat",
+    "symlink", "symlinkat", "link", "linkat", "mount", "umount2",
+    "chroot", "pivot_root", "utime", "utimes", "futimesat",
     NULL,
 };
 
