@@ -9,8 +9,12 @@ return value. Failed calls show the errno name (`ENOENT`, not `2`).
 A handful of common syscalls get extra treatment `open`/`stat`/
 `execve`/`symlink`/`link`/`mount` and friends show their path
 arguments as actual strings instead of pointers, `execve`/`execveat`
-show their `argv`/`envp` arrays decoded too, and `read`/`write` show
-the bytes they're moving. You can also narrow the trace down with
+show their `argv`/`envp` arrays decoded too, `read`/`write` show
+the bytes they're moving, and `connect`/`bind`/`sendto` show their
+destination address decoded (`{sa_family=AF_INET, sin_port=htons(80),
+sin_addr=inet_addr("1.2.3.4")}` for IPv4, `{sa_family=AF_UNIX,
+sun_path="/path"}` for Unix sockets) instead of a raw pointer. You
+can also narrow the trace down with
 `-e trace=SET`, where SET is a comma-separated mix of categories
 (`file`, `network`, `process`) and/or exact syscall names:
 `-e trace=file` shows only filesystem calls, `-e trace=network,openat`
@@ -204,6 +208,20 @@ everything else uses (so it respects `-s` per element too). Capped at
 32 entries so a huge environment can't blow up the line length or the
 ptrace call count; a `...` at the end means the array kept going past
 that cap.
+
+`connect`/`bind`/`sendto`'s sockaddr decoding reads the raw struct
+bytes (a new `read_child_raw()`, same peek loop as everything else
+minus the string-escaping) and interprets the first two bytes as
+`sa_family` — always host-endian, unlike the port/address fields
+inside `sockaddr_in`, which are always network byte order regardless
+of the host, so those get unpacked byte-by-byte rather than assumed
+to match the tracer's own endianness. Only `AF_INET` and `AF_UNIX`
+are decoded; anything else just shows the numeric family. This only
+covers syscalls where the caller already filled in the struct before
+the call — `accept`/`getsockname`/`getpeername`'s sockaddr is the
+opposite case (empty until the syscall returns, like `read()`'s
+buffer) and would need the same entry/exit deferral read() uses,
+which isn't implemented for it (yet).
 
 ## Requirements
 

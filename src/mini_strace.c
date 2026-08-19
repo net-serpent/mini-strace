@@ -284,6 +284,30 @@ static const buffer_arg_entry *buffer_arg_lookup(const char *syscall) {
     return NULL;
 }
 
+/* Syscalls whose input is a struct sockaddr, paired with which
+ * argument slot holds it and which holds its length — same shape as
+ * buffer_arg_table, reused as-is since it's the same idea (a slot
+ * that's already populated by the caller at entry, plus a length
+ * slot). accept/getsockname/getpeername's sockaddr is the opposite
+ * case (only filled in *after* the syscall runs, like read()'s
+ * buffer) and isn't covered here — decoding those would need the
+ * same entry/exit deferral read() uses, which is out of scope for
+ * now. */
+static const buffer_arg_entry sockaddr_arg_table[] = {
+    { "connect", 1, 2 },
+    { "bind",    1, 2 },
+    { "sendto",  4, 5 },
+    { NULL,      0, 0 },
+};
+
+static const buffer_arg_entry *sockaddr_arg_lookup(const char *syscall) {
+    for (int i = 0; sockaddr_arg_table[i].name != NULL; i++) {
+        if (strcmp(sockaddr_arg_table[i].name, syscall) == 0)
+            return &sockaddr_arg_table[i];
+    }
+    return NULL;
+}
+
 /* Syscalls whose output is a raw byte buffer that's only populated
  * *after* the syscall actually runs — read()'s buf is garbage/empty
  * at the entry-stop, so unlike write() this can't be dereferenced
@@ -585,6 +609,85 @@ static void read_child_buffer(pid_t pid, unsigned long long addr, unsigned long 
     }
     if (oi < out_size) out[oi] = '\0';
     else out[out_size - 1] = '\0';
+}
+
+/* Same word-at-a-time PTRACE_PEEKDATA loop as read_child_buffer, but
+ * returns the raw bytes instead of an escaped string — for callers
+ * that need to interpret the bytes as a struct (format_sockaddr
+ * below) rather than display them as text. */
+static size_t read_child_raw(pid_t pid, unsigned long long addr, unsigned char *buf, size_t want) {
+    size_t got = 0;
+    while (got < want) {
+        errno = 0;
+        long word = ptrace(PTRACE_PEEKDATA, pid, (void *)(addr + got), NULL);
+        if (word == -1 && errno != 0)
+            break;  /* unmapped/invalid address — stop, use what we have */
+
+        size_t chunk = (want - got < sizeof(long)) ? (want - got) : sizeof(long);
+        memcpy(buf + got, &word, chunk);
+        got += chunk;
+    }
+    return got;
+}
+
+/* AF_INET/AF_UNIX defined locally rather than pulling in
+ * sys/socket.h just for two constants — same reasoning as
+ * NT_PRSTATUS_ near the top of the file. Values are fixed by the
+ * Linux ABI, not configurable. */
+#define AF_INET_ 2
+#define AF_UNIX_ 1
+
+/* Decodes a struct sockaddr argument (connect/bind/sendto) into
+ * something readable instead of a raw pointer. sa_family is always
+ * host-endian; sin_port/sin_addr inside sockaddr_in are always
+ * network byte order regardless of host endianness, so they're
+ * unpacked byte-by-byte here rather than assuming any particular
+ * host layout. Only AF_INET and AF_UNIX are decoded — anything else
+ * (AF_INET6, AF_NETLINK, ...) just shows the numeric family, which
+ * is still more useful than a bare address and keeps this from
+ * turning into a full sockaddr_in6/sockaddr_nl decoder. */
+static void format_sockaddr(pid_t pid, unsigned long long addr, unsigned long long addrlen,
+                             char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    unsigned char raw[128];
+    size_t want = (addrlen < sizeof(raw)) ? (size_t)addrlen : sizeof(raw);
+    if (want < 2)
+        want = 2;  /* always try to get at least sa_family */
+    size_t got = read_child_raw(pid, addr, raw, want);
+
+    if (got < 2) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    unsigned short family = (unsigned short)(raw[0] | (raw[1] << 8));
+
+    if (family == AF_INET_ && got >= 8) {
+        unsigned int port = ((unsigned int)raw[2] << 8) | raw[3];
+        snprintf(out, out_size,
+                 "{sa_family=AF_INET, sin_port=htons(%u), sin_addr=inet_addr(\"%u.%u.%u.%u\")}",
+                 port, raw[4], raw[5], raw[6], raw[7]);
+    } else if (family == AF_UNIX_) {
+        size_t path_len = got > 2 ? got - 2 : 0;
+        if (path_len > sizeof(raw) - 2)
+            path_len = sizeof(raw) - 2;
+        /* an abstract socket's path starts with a NUL byte instead
+         * of being a normal filesystem path — real strace (and the
+         * kernel's own convention) marks that with a leading '@'. */
+        if (path_len > 0 && raw[2] == '\0') {
+            snprintf(out, out_size, "{sa_family=AF_UNIX, sun_path=\"@%.*s\"}",
+                     (int)path_len - 1, (const char *)raw + 3);
+        } else {
+            snprintf(out, out_size, "{sa_family=AF_UNIX, sun_path=\"%.*s\"}",
+                     (int)path_len, (const char *)raw + 2);
+        }
+    } else {
+        snprintf(out, out_size, "{sa_family=%u, ...}", family);
+    }
 }
 
 #if defined(__x86_64__)
@@ -949,6 +1052,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char argv_mask = argv_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
+                    const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
 
                     char argbuf[6][STR_ARG_BUF_LEN];
                     for (int i = 0; i < 6; i++) {
@@ -959,6 +1063,9 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));
+                        else if (sockaddr_entry != NULL && i == sockaddr_entry->buf_idx)
+                            format_sockaddr(wpid, raw_args[i], raw_args[sockaddr_entry->len_idx],
+                                             argbuf[i], sizeof(argbuf[i]));
                         else
                             format_hex_or_fd_arg(wpid, raw_args[i], fd_mask & (1 << i),
                                                   argbuf[i], sizeof(argbuf[i]));
