@@ -10,8 +10,9 @@ A handful of common syscalls get extra treatment `open`/`stat`/
 `execve`/`symlink`/`link`/`mount` and friends show their path
 arguments as actual strings instead of pointers, `execve`/`execveat`
 show their `argv`/`envp` arrays decoded too, `read`/`write` show
-the bytes they're moving, and `connect`/`bind`/`sendto` show their
-destination address decoded (`{sa_family=AF_INET, sin_port=htons(80),
+the bytes they're moving, and `connect`/`bind`/`sendto`/`accept`/
+`getsockname`/`getpeername` show the socket address decoded
+(`{sa_family=AF_INET, sin_port=htons(80),
 sin_addr=inet_addr("1.2.3.4")}` for IPv4, `{sa_family=AF_UNIX,
 sun_path="/path"}` for Unix sockets) instead of a raw pointer. You
 can also narrow the trace down with
@@ -210,18 +211,24 @@ ptrace call count; a `...` at the end means the array kept going past
 that cap.
 
 `connect`/`bind`/`sendto`'s sockaddr decoding reads the raw struct
-bytes (a new `read_child_raw()`, same peek loop as everything else
-minus the string-escaping) and interprets the first two bytes as
+bytes (`read_child_raw()`, same peek loop as everything else minus
+the string-escaping) and interprets the first two bytes as
 `sa_family` — always host-endian, unlike the port/address fields
 inside `sockaddr_in`, which are always network byte order regardless
 of the host, so those get unpacked byte-by-byte rather than assumed
 to match the tracer's own endianness. Only `AF_INET` and `AF_UNIX`
-are decoded; anything else just shows the numeric family. This only
-covers syscalls where the caller already filled in the struct before
-the call — `accept`/`getsockname`/`getpeername`'s sockaddr is the
-opposite case (empty until the syscall returns, like `read()`'s
-buffer) and would need the same entry/exit deferral read() uses,
-which isn't implemented for it (yet).
+are decoded; anything else just shows the numeric family.
+
+`accept`/`accept4`/`getsockname`/`getpeername`'s sockaddr is the
+opposite case — empty until the syscall returns, like `read()`'s
+buffer — so it goes through the same kind of entry/exit deferral,
+just with its own pending-state field (`pending_sockaddr_entry`)
+alongside read()'s, since a syscall can only ever be one or the
+other. One extra wrinkle these have that `read()` doesn't: the
+`socklen_t *` telling you how much of the struct is real is itself
+only valid *after* the call too, so that pointer gets re-read with
+its own `ptrace` peek at the exit-stop rather than trusted from
+entry.
 
 ## Requirements
 

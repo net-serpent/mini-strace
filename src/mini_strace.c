@@ -64,6 +64,7 @@
 #include <sys/user.h>
 #include <errno.h>
 #include <time.h>
+#include <sys/socket.h>
 
 #if defined(__aarch64__)
 #include <sys/uio.h>
@@ -290,9 +291,7 @@ static const buffer_arg_entry *buffer_arg_lookup(const char *syscall) {
  * that's already populated by the caller at entry, plus a length
  * slot). accept/getsockname/getpeername's sockaddr is the opposite
  * case (only filled in *after* the syscall runs, like read()'s
- * buffer) and isn't covered here — decoding those would need the
- * same entry/exit deferral read() uses, which is out of scope for
- * now. */
+ * buffer) — see accept_arg_table below for those. */
 static const buffer_arg_entry sockaddr_arg_table[] = {
     { "connect", 1, 2 },
     { "bind",    1, 2 },
@@ -304,6 +303,29 @@ static const buffer_arg_entry *sockaddr_arg_lookup(const char *syscall) {
     for (int i = 0; sockaddr_arg_table[i].name != NULL; i++) {
         if (strcmp(sockaddr_arg_table[i].name, syscall) == 0)
             return &sockaddr_arg_table[i];
+    }
+    return NULL;
+}
+
+/* Syscalls whose sockaddr argument is only populated *after* the
+ * syscall runs — like read_arg_table below, but for a struct
+ * sockaddr instead of a plain byte buffer. len_idx here points at a
+ * socklen_t* (not a length value): the kernel writes the actual
+ * struct size it produced through that pointer, which has to be
+ * read back at the exit-stop to know how many bytes of the sockaddr
+ * are real. */
+static const buffer_arg_entry accept_arg_table[] = {
+    { "accept",       1, 2 },
+    { "accept4",      1, 2 },
+    { "getsockname",  1, 2 },
+    { "getpeername",  1, 2 },
+    { NULL,           0, 0 },
+};
+
+static const buffer_arg_entry *accept_arg_lookup(const char *syscall) {
+    for (int i = 0; accept_arg_table[i].name != NULL; i++) {
+        if (strcmp(accept_arg_table[i].name, syscall) == 0)
+            return &accept_arg_table[i];
     }
     return NULL;
 }
@@ -630,13 +652,6 @@ static size_t read_child_raw(pid_t pid, unsigned long long addr, unsigned char *
     return got;
 }
 
-/* AF_INET/AF_UNIX defined locally rather than pulling in
- * sys/socket.h just for two constants — same reasoning as
- * NT_PRSTATUS_ near the top of the file. Values are fixed by the
- * Linux ABI, not configurable. */
-#define AF_INET_ 2
-#define AF_UNIX_ 1
-
 /* Decodes a struct sockaddr argument (connect/bind/sendto) into
  * something readable instead of a raw pointer. sa_family is always
  * host-endian; sin_port/sin_addr inside sockaddr_in are always
@@ -666,12 +681,12 @@ static void format_sockaddr(pid_t pid, unsigned long long addr, unsigned long lo
 
     unsigned short family = (unsigned short)(raw[0] | (raw[1] << 8));
 
-    if (family == AF_INET_ && got >= 8) {
+    if (family == AF_INET && got >= 8) {
         unsigned int port = ((unsigned int)raw[2] << 8) | raw[3];
         snprintf(out, out_size,
                  "{sa_family=AF_INET, sin_port=htons(%u), sin_addr=inet_addr(\"%u.%u.%u.%u\")}",
                  port, raw[4], raw[5], raw[6], raw[7]);
-    } else if (family == AF_UNIX_) {
+    } else if (family == AF_UNIX) {
         size_t path_len = got > 2 ? got - 2 : 0;
         if (path_len > sizeof(raw) - 2)
             path_len = sizeof(raw) - 2;
@@ -764,6 +779,7 @@ typedef struct {
     const char *pending_name;
     unsigned long long pending_args[6];
     const buffer_arg_entry *pending_read_entry;
+    const buffer_arg_entry *pending_sockaddr_entry;
     int suppressed;
     struct timespec entry_time;  /* when this syscall's entry-stop fired, for -T/-c */
     const char *current_name;    /* syscall in flight, for -c's per-name accounting */
@@ -1020,6 +1036,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
             };
 
             const buffer_arg_entry *read_entry = read_arg_lookup(name);
+            const buffer_arg_entry *accept_entry = accept_arg_lookup(name);
 
             if (show_timing || summary_mode)
                 clock_gettime(CLOCK_MONOTONIC, &ts->entry_time);
@@ -1030,8 +1047,9 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 /* filtered out by -e trace=SET — don't print anything,
                  * but still track it through entry/exit like normal so
                  * the toggle stays in sync and pending state from a
-                 * *previous* (allowed) read() doesn't leak in. */
+                 * *previous* (allowed) read()/accept() doesn't leak in. */
                 ts->pending_read_entry = NULL;
+                ts->pending_sockaddr_entry = NULL;
             } else if (read_entry != NULL) {
                 /* read()-family: its buffer is unpopulated until the
                  * syscall actually runs, so there's nothing useful
@@ -1041,12 +1059,23 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_name = name;
                 memcpy(ts->pending_args, raw_args, sizeof(raw_args));
                 ts->pending_read_entry = read_entry;
+                ts->pending_sockaddr_entry = NULL;
+            } else if (accept_entry != NULL) {
+                /* accept/getsockname/getpeername-family: same idea as
+                 * read()'s deferral, but for a struct sockaddr instead
+                 * of a plain buffer — the kernel only fills it in once
+                 * the syscall actually returns. */
+                ts->pending_name = name;
+                memcpy(ts->pending_args, raw_args, sizeof(raw_args));
+                ts->pending_sockaddr_entry = accept_entry;
+                ts->pending_read_entry = NULL;
             } else {
                 /* everything else prints immediately, same as before:
                  * known path-string args get dereferenced, write()'s
                  * buffer gets dumped, everything unrecognized prints
                  * as a raw hex address/value. */
                 ts->pending_read_entry = NULL;
+                ts->pending_sockaddr_entry = NULL;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
@@ -1113,6 +1142,39 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 argbuf[3], argbuf[4], argbuf[5]);
                     }
                     ts->pending_read_entry = NULL;
+                }
+
+                if (ts->pending_sockaddr_entry != NULL) {
+                    /* deferred accept/getsockname/getpeername print:
+                     * the socklen_t the kernel wrote the real struct
+                     * size into is itself only valid now, at the
+                     * exit-stop, so it has to be re-read via its own
+                     * ptrace peek rather than trusted from entry. */
+                    if (!summary_mode) {
+                        unsigned char fd_mask = show_fd_paths ? fd_arg_mask(ts->pending_name) : 0;
+                        int addrlen_idx = ts->pending_sockaddr_entry->len_idx;
+                        unsigned long long addrlen_ptr = ts->pending_args[addrlen_idx];
+                        unsigned long long addrlen = sizeof(struct sockaddr_storage);
+                        if (ret >= 0 && addrlen_ptr != 0) {
+                            errno = 0;
+                            long word = ptrace(PTRACE_PEEKDATA, wpid, (void *)addrlen_ptr, NULL);
+                            if (!(word == -1 && errno != 0))
+                                addrlen = (unsigned int)word;  /* socklen_t is 4 bytes */
+                        }
+
+                        char argbuf[6][STR_ARG_BUF_LEN];
+                        for (int i = 0; i < 6; i++) {
+                            if (i == ts->pending_sockaddr_entry->buf_idx && ret >= 0)
+                                format_sockaddr(wpid, ts->pending_args[i], addrlen, argbuf[i], sizeof(argbuf[i]));
+                            else
+                                format_hex_or_fd_arg(wpid, ts->pending_args[i], fd_mask & (1 << i),
+                                                      argbuf[i], sizeof(argbuf[i]));
+                        }
+                        fprintf(trace_out, "%s%s(%s, %s, %s, %s, %s, %s) ",
+                                pid_prefix, ts->pending_name, argbuf[0], argbuf[1], argbuf[2],
+                                argbuf[3], argbuf[4], argbuf[5]);
+                    }
+                    ts->pending_sockaddr_entry = NULL;
                 }
 
                 double elapsed = 0.0;
