@@ -65,6 +65,7 @@
 #include <errno.h>
 #include <time.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 
 #if defined(__aarch64__)
 #include <sys/uio.h>
@@ -654,13 +655,16 @@ static size_t read_child_raw(pid_t pid, unsigned long long addr, unsigned char *
 
 /* Decodes a struct sockaddr argument (connect/bind/sendto) into
  * something readable instead of a raw pointer. sa_family is always
- * host-endian; sin_port/sin_addr inside sockaddr_in are always
- * network byte order regardless of host endianness, so they're
- * unpacked byte-by-byte here rather than assuming any particular
- * host layout. Only AF_INET and AF_UNIX are decoded — anything else
- * (AF_INET6, AF_NETLINK, ...) just shows the numeric family, which
- * is still more useful than a bare address and keeps this from
- * turning into a full sockaddr_in6/sockaddr_nl decoder. */
+ * host-endian; sin_port/sin_addr inside sockaddr_in (and sin6_port
+ * inside sockaddr_in6) are always network byte order regardless of
+ * host endianness, so they're unpacked byte-by-byte here rather than
+ * assuming any particular host layout — inet_ntop() takes the raw
+ * 16-byte address as-is (it's defined byte-order-agnostic, not a
+ * host-endian integer) so that part doesn't need manual unpacking.
+ * Only AF_INET, AF_INET6, and AF_UNIX are decoded — anything else
+ * (AF_NETLINK, ...) just shows the numeric family, which is still
+ * more useful than a bare address and keeps this from turning into a
+ * decoder for every address family Linux has. */
 static void format_sockaddr(pid_t pid, unsigned long long addr, unsigned long long addrlen,
                              char *out, size_t out_size) {
     if (addr == 0) {
@@ -686,6 +690,17 @@ static void format_sockaddr(pid_t pid, unsigned long long addr, unsigned long lo
         snprintf(out, out_size,
                  "{sa_family=AF_INET, sin_port=htons(%u), sin_addr=inet_addr(\"%u.%u.%u.%u\")}",
                  port, raw[4], raw[5], raw[6], raw[7]);
+    } else if (family == AF_INET6 && got >= 8 + sizeof(struct in6_addr)) {
+        unsigned int port = ((unsigned int)raw[2] << 8) | raw[3];
+        char ipstr[INET6_ADDRSTRLEN];
+        /* sockaddr_in6 layout: family(2), port(2), flowinfo(4), addr(16), scope_id(4) */
+        if (inet_ntop(AF_INET6, raw + 8, ipstr, sizeof(ipstr)) != NULL) {
+            snprintf(out, out_size,
+                     "{sa_family=AF_INET6, sin6_port=htons(%u), sin6_addr=inet_pton(AF_INET6, \"%s\")}",
+                     port, ipstr);
+        } else {
+            snprintf(out, out_size, "{sa_family=AF_INET6, ...}");
+        }
     } else if (family == AF_UNIX) {
         size_t path_len = got > 2 ? got - 2 : 0;
         if (path_len > sizeof(raw) - 2)

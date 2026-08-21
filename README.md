@@ -13,9 +13,9 @@ show their `argv`/`envp` arrays decoded too, `read`/`write` show
 the bytes they're moving, and `connect`/`bind`/`sendto`/`accept`/
 `getsockname`/`getpeername` show the socket address decoded
 (`{sa_family=AF_INET, sin_port=htons(80),
-sin_addr=inet_addr("1.2.3.4")}` for IPv4, `{sa_family=AF_UNIX,
-sun_path="/path"}` for Unix sockets) instead of a raw pointer. You
-can also narrow the trace down with
+sin_addr=inet_addr("1.2.3.4")}` for IPv4, the equivalent for IPv6,
+`{sa_family=AF_UNIX, sun_path="/path"}` for Unix sockets) instead of
+a raw pointer. You can also narrow the trace down with
 `-e trace=SET`, where SET is a comma-separated mix of categories
 (`file`, `network`, `process`) and/or exact syscall names:
 `-e trace=file` shows only filesystem calls, `-e trace=network,openat`
@@ -213,10 +213,15 @@ that cap.
 `connect`/`bind`/`sendto`'s sockaddr decoding reads the raw struct
 bytes (`read_child_raw()`, same peek loop as everything else minus
 the string-escaping) and interprets the first two bytes as
-`sa_family` — always host-endian, unlike the port/address fields
-inside `sockaddr_in`, which are always network byte order regardless
-of the host, so those get unpacked byte-by-byte rather than assumed
-to match the tracer's own endianness. Only `AF_INET` and `AF_UNIX`
+`sa_family` — always host-endian, unlike the port fields inside
+`sockaddr_in`/`sockaddr_in6`, which are always network byte order
+regardless of the host, so those get unpacked byte-by-byte rather
+than assumed to match the tracer's own endianness. The address
+itself (`sin_addr`/`sin6_addr`) doesn't need that treatment — IPv4
+gets the same manual byte-by-byte formatting since it's just 4 bytes,
+but IPv6's 16 bytes are handed to `inet_ntop()` as-is, since that
+function is defined to take the address in its raw on-the-wire form,
+not as a host-endian integer. `AF_INET`, `AF_INET6`, and `AF_UNIX`
 are decoded; anything else just shows the numeric family.
 
 `accept`/`accept4`/`getsockname`/`getpeername`'s sockaddr is the
