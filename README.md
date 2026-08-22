@@ -1,5 +1,7 @@
 # mini-strace
 
+[![CI](https://github.com/net-serpent/stracebeta/actions/workflows/ci.yml/badge.svg)](https://github.com/net-serpent/stracebeta/actions/workflows/ci.yml)
+
 A stripped-down clone of `strace`, built on Linux's `ptrace(2)` API.
 
 ## What it does
@@ -116,6 +118,30 @@ docker compose run --rm dev
 make
 ./mini-strace /bin/echo hello world
 ```
+
+## Testing
+
+`tests/run_tests.sh` exercises every flag above against real programs
+— it's the same checks that were run by hand during development, made
+repeatable. Needs Linux (same as the tool itself):
+
+```bash
+make
+bash tests/run_tests.sh
+```
+
+On macOS, run it inside the dev container the same way as the build:
+
+```bash
+docker compose run --rm dev
+make
+bash tests/run_tests.sh
+```
+
+CI runs this on every push/PR to `main` (see the badge at the top).
+One test (`-p` attach to a sibling process) is skipped rather than
+failed if the environment's ptrace permissions don't allow it — some
+sandboxes restrict `PTRACE_ATTACH` to direct descendants only.
 
 ## How it works
 
