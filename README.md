@@ -10,8 +10,8 @@ A handful of common syscalls get extra treatment `open`/`stat`/
 `execve`/`symlink`/`link`/`mount` and friends show their path
 arguments as actual strings instead of pointers, `execve`/`execveat`
 show their `argv`/`envp` arrays decoded too, `read`/`write` show
-the bytes they're moving, and `connect`/`bind`/`sendto`/`accept`/
-`getsockname`/`getpeername` show the socket address decoded
+the bytes they're moving, and `connect`/`bind`/`sendto`/`recvfrom`/
+`accept`/`getsockname`/`getpeername` show the socket address decoded
 (`{sa_family=AF_INET, sin_port=htons(80),
 sin_addr=inet_addr("1.2.3.4")}` for IPv4, the equivalent for IPv6,
 `{sa_family=AF_UNIX, sun_path="/path"}` for Unix sockets) instead of
@@ -224,16 +224,20 @@ function is defined to take the address in its raw on-the-wire form,
 not as a host-endian integer. `AF_INET`, `AF_INET6`, and `AF_UNIX`
 are decoded; anything else just shows the numeric family.
 
-`accept`/`accept4`/`getsockname`/`getpeername`'s sockaddr is the
-opposite case — empty until the syscall returns, like `read()`'s
-buffer — so it goes through the same kind of entry/exit deferral,
-just with its own pending-state field (`pending_sockaddr_entry`)
-alongside read()'s, since a syscall can only ever be one or the
-other. One extra wrinkle these have that `read()` doesn't: the
-`socklen_t *` telling you how much of the struct is real is itself
-only valid *after* the call too, so that pointer gets re-read with
-its own `ptrace` peek at the exit-stop rather than trusted from
-entry.
+`accept`/`accept4`/`getsockname`/`getpeername`/`recvfrom`'s sockaddr
+is the opposite case — empty until the syscall returns, like
+`read()`'s buffer — so it goes through the same kind of entry/exit
+deferral, just with its own pending-state field
+(`pending_sockaddr_entry`) alongside read()'s, since a syscall can
+only ever be one or the other. One extra wrinkle these have that
+`read()` doesn't: the `socklen_t *` telling you how much of the
+struct is real is itself only valid *after* the call too, so that
+pointer gets re-read with its own `ptrace` peek at the exit-stop
+rather than trusted from entry. `recvfrom` is also the one syscall
+that's genuinely both kinds at once — a deferred data buffer *and* a
+deferred sockaddr — but combining the two into a single print isn't
+supported, so only its address gets decoded; the data stays raw hex
+for now.
 
 ## Requirements
 

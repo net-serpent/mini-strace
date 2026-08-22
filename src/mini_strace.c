@@ -314,12 +314,17 @@ static const buffer_arg_entry *sockaddr_arg_lookup(const char *syscall) {
  * socklen_t* (not a length value): the kernel writes the actual
  * struct size it produced through that pointer, which has to be
  * read back at the exit-stop to know how many bytes of the sockaddr
- * are real. */
+ * are real. recvfrom's data buffer (arg 1) isn't decoded here — only
+ * its src_addr (arg 4) — since it would need read()'s buffer
+ * deferral and this sockaddr deferral combined into a single
+ * exit-stop print, which isn't supported; it falls back to plain hex
+ * the same as before this table existed. */
 static const buffer_arg_entry accept_arg_table[] = {
     { "accept",       1, 2 },
     { "accept4",      1, 2 },
     { "getsockname",  1, 2 },
     { "getpeername",  1, 2 },
+    { "recvfrom",     4, 5 },
     { NULL,           0, 0 },
 };
 
