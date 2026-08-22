@@ -227,17 +227,22 @@ are decoded; anything else just shows the numeric family.
 `accept`/`accept4`/`getsockname`/`getpeername`/`recvfrom`'s sockaddr
 is the opposite case — empty until the syscall returns, like
 `read()`'s buffer — so it goes through the same kind of entry/exit
-deferral, just with its own pending-state field
-(`pending_sockaddr_entry`) alongside read()'s, since a syscall can
-only ever be one or the other. One extra wrinkle these have that
+deferral, tracked in its own `pending_sockaddr_entry` field alongside
+`read()`'s `pending_read_entry`. One extra wrinkle these have that
 `read()` doesn't: the `socklen_t *` telling you how much of the
 struct is real is itself only valid *after* the call too, so that
 pointer gets re-read with its own `ptrace` peek at the exit-stop
-rather than trusted from entry. `recvfrom` is also the one syscall
-that's genuinely both kinds at once — a deferred data buffer *and* a
-deferred sockaddr — but combining the two into a single print isn't
-supported, so only its address gets decoded; the data stays raw hex
-for now.
+rather than trusted from entry.
+
+`recvfrom` is the one syscall that needs *both* deferrals on the same
+call — a data buffer and a sockaddr, each only populated once the
+syscall returns — so it's the only entry in both `read_arg_table` and
+`accept_arg_table` at once. The two pending-state fields aren't
+mutually exclusive: the exit-stop print just checks each of the 6
+argument slots against both, so whichever one (or both, or neither)
+applies gets rendered into the same line. `recvfrom(3, "hello", 1024,
+0, {sa_family=AF_INET, ...}, ...) = 5` comes out of the same code
+path that gives plain `read()` its buffer and `accept()` its address.
 
 ## Requirements
 
