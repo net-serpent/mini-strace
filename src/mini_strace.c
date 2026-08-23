@@ -334,6 +334,25 @@ static const buffer_arg_entry *accept_arg_lookup(const char *syscall) {
     return NULL;
 }
 
+/* wait4's wstatus is a third kind of exit-only-populated argument —
+ * a plain int this time, not a buffer or a struct — so it gets its
+ * own bitmask table (string_arg_entry's shape fits fine) rather than
+ * reusing buffer_arg_entry, which carries a len_idx this doesn't
+ * need. waitid() isn't covered: its equivalent is a siginfo_t, a
+ * different and more involved decode. */
+static const string_arg_entry wait_status_arg_table[] = {
+    { "wait4", 0x02 },  /* arg 1 */
+    { NULL,    0x00 },
+};
+
+static unsigned char wait_status_arg_mask(const char *syscall) {
+    for (int i = 0; wait_status_arg_table[i].name != NULL; i++) {
+        if (strcmp(wait_status_arg_table[i].name, syscall) == 0)
+            return wait_status_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Syscalls whose output is a raw byte buffer that's only populated
  * *after* the syscall actually runs — read()'s buf is garbage/empty
  * at the entry-stop, so unlike write() this can't be dereferenced
@@ -724,6 +743,39 @@ static void format_sockaddr(pid_t pid, unsigned long long addr, unsigned long lo
     }
 }
 
+/* Decodes wait4's wstatus into the WIFEXITED/WIFSIGNALED/WIFSTOPPED
+ * form real strace uses, instead of a raw hex encoded status word.
+ * A single PTRACE_PEEKDATA is enough since wstatus is only 4 bytes
+ * (an int) — no need for the multi-word read loop the string/buffer
+ * readers use. */
+static void format_wait_status(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    errno = 0;
+    long word = ptrace(PTRACE_PEEKDATA, pid, (void *)addr, NULL);
+    if (word == -1 && errno != 0) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    int wstatus = (int)(word & 0xffffffff);
+
+    if (WIFEXITED(wstatus)) {
+        snprintf(out, out_size, "[{WIFEXITED(s) && WEXITSTATUS(s) == %d}]", WEXITSTATUS(wstatus));
+    } else if (WIFSIGNALED(wstatus)) {
+        snprintf(out, out_size, "[{WIFSIGNALED(s) && WTERMSIG(s) == SIG%s}]",
+                 sigabbrev_np(WTERMSIG(wstatus)));
+    } else if (WIFSTOPPED(wstatus)) {
+        snprintf(out, out_size, "[{WIFSTOPPED(s) && WSTOPSIG(s) == SIG%s}]",
+                 sigabbrev_np(WSTOPSIG(wstatus)));
+    } else {
+        snprintf(out, out_size, "[0x%x]", (unsigned int)wstatus);
+    }
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -799,6 +851,7 @@ typedef struct {
     unsigned long long pending_args[6];
     const buffer_arg_entry *pending_read_entry;
     const buffer_arg_entry *pending_sockaddr_entry;
+    int pending_wait_status_idx;  /* -1 = none; which arg is wait4's wstatus */
     int suppressed;
     struct timespec entry_time;  /* when this syscall's entry-stop fired, for -T/-c */
     const char *current_name;    /* syscall in flight, for -c's per-name accounting */
@@ -1056,6 +1109,14 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
 
             const buffer_arg_entry *read_entry = read_arg_lookup(name);
             const buffer_arg_entry *accept_entry = accept_arg_lookup(name);
+            unsigned char wait_mask = wait_status_arg_mask(name);
+            int wait_status_idx = -1;
+            for (int i = 0; i < 6; i++) {
+                if (wait_mask & (1 << i)) {
+                    wait_status_idx = i;
+                    break;
+                }
+            }
 
             if (show_timing || summary_mode)
                 clock_gettime(CLOCK_MONOTONIC, &ts->entry_time);
@@ -1066,23 +1127,26 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 /* filtered out by -e trace=SET — don't print anything,
                  * but still track it through entry/exit like normal so
                  * the toggle stays in sync and pending state from a
-                 * *previous* (allowed) read()/accept() doesn't leak in. */
+                 * *previous* (allowed) read()/accept()/wait4() doesn't
+                 * leak in. */
                 ts->pending_read_entry = NULL;
                 ts->pending_sockaddr_entry = NULL;
-            } else if (read_entry != NULL || accept_entry != NULL) {
-                /* read()-family and/or accept/getsockname/getpeername
-                 * -family: their buffer and/or sockaddr is unpopulated
-                 * until the syscall actually runs, so there's nothing
-                 * useful to dereference yet — stash everything and
-                 * build the whole line at the exit-stop instead. Both
-                 * can apply to the same call (recvfrom has a deferred
-                 * data buffer *and* a deferred sockaddr); the exit-stop
-                 * print below handles either, both, or neither being
-                 * set. */
+                ts->pending_wait_status_idx = -1;
+            } else if (read_entry != NULL || accept_entry != NULL || wait_status_idx >= 0) {
+                /* read()-family, accept/getsockname/getpeername-family,
+                 * and/or wait4: their buffer/sockaddr/wstatus is
+                 * unpopulated until the syscall actually runs, so
+                 * there's nothing useful to dereference yet — stash
+                 * everything and build the whole line at the exit-stop
+                 * instead. More than one can apply to the same call
+                 * (recvfrom has a deferred data buffer *and* a deferred
+                 * sockaddr); the exit-stop print below handles any
+                 * combination, or none, being set. */
                 ts->pending_name = name;
                 memcpy(ts->pending_args, raw_args, sizeof(raw_args));
                 ts->pending_read_entry = read_entry;
                 ts->pending_sockaddr_entry = accept_entry;
+                ts->pending_wait_status_idx = wait_status_idx;
             } else {
                 /* everything else prints immediately, same as before:
                  * known path-string args get dereferenced, write()'s
@@ -1090,6 +1154,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                  * as a raw hex address/value. */
                 ts->pending_read_entry = NULL;
                 ts->pending_sockaddr_entry = NULL;
+                ts->pending_wait_status_idx = -1;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
@@ -1131,15 +1196,16 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 /* filtered out — nothing was printed at entry, so
                  * nothing prints here either */
             } else {
-                if (ts->pending_read_entry != NULL || ts->pending_sockaddr_entry != NULL) {
+                if (ts->pending_read_entry != NULL || ts->pending_sockaddr_entry != NULL ||
+                    ts->pending_wait_status_idx >= 0) {
                     /* deferred print: build the whole "name(args) = ret"
                      * line now that the return value (and anything the
-                     * kernel filled in) is available. Either field can
-                     * be set alone (read()-family, or
-                     * accept/getsockname/getpeername-family) or both
-                     * together (recvfrom: a deferred data buffer *and*
-                     * a deferred sockaddr in the same call) — each
-                     * claims its own argument slot, so there's no
+                     * kernel filled in) is available. Any of the three
+                     * pending fields can be set alone (read()-family,
+                     * accept/getsockname/getpeername-family, or wait4)
+                     * or combined (recvfrom: a deferred data buffer
+                     * *and* a deferred sockaddr in the same call) —
+                     * each claims its own argument slot, so there's no
                      * conflict rendering them into the same line.
                      * Skipped entirely under -c, which never prints
                      * per-call lines. */
@@ -1171,6 +1237,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             else if (ts->pending_sockaddr_entry != NULL &&
                                      i == ts->pending_sockaddr_entry->buf_idx && ret >= 0)
                                 format_sockaddr(wpid, ts->pending_args[i], addrlen, argbuf[i], sizeof(argbuf[i]));
+                            else if (ts->pending_wait_status_idx == i && ret >= 0)
+                                format_wait_status(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else
                                 format_hex_or_fd_arg(wpid, ts->pending_args[i], fd_mask & (1 << i),
                                                       argbuf[i], sizeof(argbuf[i]));
@@ -1181,6 +1249,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     }
                     ts->pending_read_entry = NULL;
                     ts->pending_sockaddr_entry = NULL;
+                    ts->pending_wait_status_idx = -1;
                 }
 
                 double elapsed = 0.0;

@@ -263,12 +263,26 @@ rather than trusted from entry.
 `recvfrom` is the one syscall that needs *both* deferrals on the same
 call — a data buffer and a sockaddr, each only populated once the
 syscall returns — so it's the only entry in both `read_arg_table` and
-`accept_arg_table` at once. The two pending-state fields aren't
+`accept_arg_table` at once. None of the pending-state fields are
 mutually exclusive: the exit-stop print just checks each of the 6
-argument slots against both, so whichever one (or both, or neither)
-applies gets rendered into the same line. `recvfrom(3, "hello", 1024,
-0, {sa_family=AF_INET, ...}, ...) = 5` comes out of the same code
-path that gives plain `read()` its buffer and `accept()` its address.
+argument slots against all of them, so whichever one (or several, or
+none) applies gets rendered into the same line. `recvfrom(3, "hello",
+1024, 0, {sa_family=AF_INET, ...}, ...) = 5` comes out of the same
+code path that gives plain `read()` its buffer and `accept()` its
+address.
+
+`wait4`'s `wstatus` output is the same deferred-argument shape again,
+just a plain `int` this time instead of a buffer or a struct —
+decoded into the `WIFEXITED`/`WIFSIGNALED`/`WIFSTOPPED` form real
+`strace` uses (`[{WIFEXITED(s) && WEXITSTATUS(s) == 0}]`) via a
+single `PTRACE_PEEKDATA`, since an `int` fits in one machine word. It
+slots into the same three-way "which deferred fields are set"
+exit-stop print as everything else in this section, via a third
+pending field (`pending_wait_status_idx`) that — unlike the other
+two, which are struct pointers — just needs a plain argument-slot
+index (or `-1` for none), since there's nothing else to carry.
+`waitid()`'s equivalent is a `siginfo_t`, a different and more
+involved decode, and isn't covered.
 
 ## Requirements
 

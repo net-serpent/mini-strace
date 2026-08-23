@@ -195,6 +195,19 @@ check_contains "accept() decodes the connecting peer's address" \
 check_contains "getpeername() decodes the peer address" \
     'getpeername\(.*sin_addr=inet_addr\("127\.0\.0\.1"\)' "$out"
 
+echo "=== wait4 status decoding ==="
+out=$($STRACE /bin/sh -c '/bin/true' 2>&1)
+check_contains "normal exit status decoded" \
+    'wait4\(.*WIFEXITED\(s\) && WEXITSTATUS\(s\) == 0' "$out"
+
+cat >/tmp/mini_strace_test_crashchild.c <<'EOF'
+int main(void) { volatile int *p = 0; *p = 1; return 0; }
+EOF
+gcc -O0 -o /tmp/mini_strace_test_crashchild /tmp/mini_strace_test_crashchild.c
+out=$($STRACE /bin/sh -c /tmp/mini_strace_test_crashchild 2>&1)
+check_contains "signal-killed child status decoded" \
+    'wait4\(.*WIFSIGNALED\(s\) && WTERMSIG\(s\) == SIGSEGV' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!
