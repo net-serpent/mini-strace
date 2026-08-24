@@ -208,6 +208,15 @@ out=$($STRACE /bin/sh -c /tmp/mini_strace_test_crashchild 2>&1)
 check_contains "signal-killed child status decoded" \
     'wait4\(.*WIFSIGNALED\(s\) && WTERMSIG\(s\) == SIGSEGV' "$out"
 
+echo "=== open/openat flags decoding ==="
+out=$($STRACE /bin/cat /etc/hostname 2>&1)
+check_contains "plain read-only open decoded" 'openat\(.*O_RDONLY\|O_CLOEXEC' "$out"
+
+rm -f /tmp/mini_strace_test_flagtest.txt
+out=$($STRACE python3 -c "open('/tmp/mini_strace_test_flagtest.txt', 'w')" 2>&1)
+check_contains "write+create+truncate open decoded" \
+    'openat\(.*O_WRONLY\|O_CREAT\|O_TRUNC' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

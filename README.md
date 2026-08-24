@@ -17,7 +17,9 @@ the bytes they're moving, and `connect`/`bind`/`sendto`/`recvfrom`/
 (`{sa_family=AF_INET, sin_port=htons(80),
 sin_addr=inet_addr("1.2.3.4")}` for IPv4, the equivalent for IPv6,
 `{sa_family=AF_UNIX, sun_path="/path"}` for Unix sockets) instead of
-a raw pointer. You can also narrow the trace down with
+a raw pointer, and `open`/`openat` show their flags decoded
+(`O_WRONLY|O_CREAT|O_TRUNC` instead of `0x241`). You can also narrow
+the trace down with
 `-e trace=SET`, where SET is a comma-separated mix of categories
 (`file`, `network`, `process`) and/or exact syscall names:
 `-e trace=file` shows only filesystem calls, `-e trace=network,openat`
@@ -283,6 +285,20 @@ two, which are struct pointers — just needs a plain argument-slot
 index (or `-1` for none), since there's nothing else to carry.
 `waitid()`'s equivalent is a `siginfo_t`, a different and more
 involved decode, and isn't covered.
+
+`open`/`openat`'s flags decoding is a flat OR of named bits against
+the real `<fcntl.h>` macros rather than hardcoded numbers — a few of
+these have historically differed across architectures, so trusting
+the libc header instead of a hand-copied constant avoids getting that
+wrong on some future platform. The low two bits (`O_RDONLY`/
+`O_WRONLY`/`O_RDWR`) aren't independent flags — they're a small
+enum-like value, not bits to OR against — so they're peeled off and
+named separately before the rest of the table is walked. `O_SYNC` and
+`O_TMPFILE` are each defined as an existing flag *plus* an extra bit,
+not bits of their own, so they're checked (and their bits consumed)
+before their "subset" flag — `O_DSYNC`, `O_DIRECTORY` — gets a chance
+to match on what's left over; get the table order wrong and one real
+flag would print as two.
 
 ## Requirements
 

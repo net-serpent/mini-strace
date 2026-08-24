@@ -66,6 +66,7 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 #if defined(__aarch64__)
 #include <sys/uio.h>
@@ -217,6 +218,23 @@ static unsigned char argv_arg_mask(const char *syscall) {
     for (int i = 0; argv_arg_table[i].name != NULL; i++) {
         if (strcmp(argv_arg_table[i].name, syscall) == 0)
             return argv_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds open()/openat()'s flags — decoded via
+ * format_open_flags() below instead of the generic hex fallback.
+ * creat() isn't here: it has no flags argument, only a mode. */
+static const string_arg_entry open_flags_arg_table[] = {
+    { "open",    0x02 },  /* arg 1 */
+    { "openat",  0x04 },  /* arg 2 */
+    { NULL,      0x00 },
+};
+
+static unsigned char open_flags_arg_mask(const char *syscall) {
+    for (int i = 0; open_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(open_flags_arg_table[i].name, syscall) == 0)
+            return open_flags_arg_table[i].str_args;
     }
     return 0;
 }
@@ -776,6 +794,73 @@ static void format_wait_status(pid_t pid, unsigned long long addr, char *out, si
     }
 }
 
+typedef struct {
+    unsigned long long value;
+    const char *name;
+} flag_entry;
+
+/* open()/openat()'s flags, decoded as real strace shows them —
+ * "O_WRONLY|O_CREAT|O_TRUNC" instead of an opaque hex number. Real
+ * macros from <fcntl.h> rather than hardcoded numbers, since a few
+ * of these (notably O_LARGEFILE) have historically differed across
+ * architectures — the libc headers already get that right for
+ * whatever platform this is built on.
+ *
+ * O_SYNC and O_TMPFILE are each defined as an existing flag bit
+ * *plus* an extra bit (O_SYNC = O_DSYNC | extra; O_TMPFILE =
+ * O_DIRECTORY | extra), not independent bits of their own, so they
+ * have to be checked — and their bits consumed — before their
+ * "subset" flag gets a chance to match on what's left over. That's
+ * why they're listed first: format_open_flags() below matches
+ * top-to-bottom and only claims a table entry when *all* of its bits
+ * are still present in what's left to explain. */
+static const flag_entry open_flag_table[] = {
+    { O_TMPFILE,   "O_TMPFILE" },
+    { O_SYNC,      "O_SYNC" },
+    { O_CREAT,     "O_CREAT" },
+    { O_EXCL,      "O_EXCL" },
+    { O_NOCTTY,    "O_NOCTTY" },
+    { O_TRUNC,     "O_TRUNC" },
+    { O_APPEND,    "O_APPEND" },
+    { O_NONBLOCK,  "O_NONBLOCK" },
+    { O_DSYNC,     "O_DSYNC" },
+    { O_DIRECT,    "O_DIRECT" },
+    { O_LARGEFILE, "O_LARGEFILE" },
+    { O_DIRECTORY, "O_DIRECTORY" },
+    { O_NOFOLLOW,  "O_NOFOLLOW" },
+    { O_NOATIME,   "O_NOATIME" },
+    { O_CLOEXEC,   "O_CLOEXEC" },
+    { O_PATH,      "O_PATH" },
+    { 0,           NULL },
+};
+
+static void format_open_flags(unsigned long long flags, char *out, size_t out_size) {
+    unsigned long long remaining = flags;
+    size_t oi = 0;
+
+    /* the low bits aren't independent flags — O_RDONLY/O_WRONLY/
+     * O_RDWR are a 2-bit access-mode value, not bits to OR against —
+     * so it's handled separately from the flag_entry table. */
+    const char *accmode_name = "O_RDONLY";
+    if ((remaining & O_ACCMODE) == O_WRONLY)
+        accmode_name = "O_WRONLY";
+    else if ((remaining & O_ACCMODE) == O_RDWR)
+        accmode_name = "O_RDWR";
+    remaining &= ~(unsigned long long)O_ACCMODE;
+
+    oi += (size_t)snprintf(out + oi, out_size - oi, "%s", accmode_name);
+
+    for (int i = 0; open_flag_table[i].name != NULL && oi < out_size; i++) {
+        if (open_flag_table[i].value != 0 &&
+            (remaining & open_flag_table[i].value) == open_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "|%s", open_flag_table[i].name);
+            remaining &= ~open_flag_table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "|0x%llx", remaining);
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1158,6 +1243,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
+                    unsigned char open_flags_mask = open_flags_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1168,6 +1254,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             read_child_string(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (argv_mask & (1 << i))
                             read_child_argv(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (open_flags_mask & (1 << i))
+                            format_open_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));
