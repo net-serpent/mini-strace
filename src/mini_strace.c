@@ -67,6 +67,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 
 #if defined(__aarch64__)
 #include <sys/uio.h>
@@ -164,6 +165,7 @@ static const string_arg_entry fd_arg_table[] = {
     { "fsync",        0x01 },
     { "fdatasync",    0x01 },
     { "flock",        0x01 },
+    { "mmap",         0x10 },  /* arg 4 (usually -1 for MAP_ANONYMOUS) */
     { "openat",       0x01 },
     { "faccessat",    0x01 },
     { "faccessat2",   0x01 },
@@ -235,6 +237,35 @@ static unsigned char open_flags_arg_mask(const char *syscall) {
     for (int i = 0; open_flags_arg_table[i].name != NULL; i++) {
         if (strcmp(open_flags_arg_table[i].name, syscall) == 0)
             return open_flags_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds a PROT_ or MAP_ value — mmap has both (prot
+ * and flags are separate arguments), mprotect only has prot. */
+static const string_arg_entry prot_flags_arg_table[] = {
+    { "mmap",      0x04 },  /* arg 2 */
+    { "mprotect",  0x04 },  /* arg 2 */
+    { NULL,        0x00 },
+};
+
+static unsigned char prot_flags_arg_mask(const char *syscall) {
+    for (int i = 0; prot_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(prot_flags_arg_table[i].name, syscall) == 0)
+            return prot_flags_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+static const string_arg_entry map_flags_arg_table[] = {
+    { "mmap",  0x08 },  /* arg 3 */
+    { NULL,    0x00 },
+};
+
+static unsigned char map_flags_arg_mask(const char *syscall) {
+    for (int i = 0; map_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(map_flags_arg_table[i].name, syscall) == 0)
+            return map_flags_arg_table[i].str_args;
     }
     return 0;
 }
@@ -861,6 +892,70 @@ static void format_open_flags(unsigned long long flags, char *out, size_t out_si
         snprintf(out + oi, out_size - oi, "|0x%llx", remaining);
 }
 
+/* mmap()/mprotect()'s prot argument — PROT_READ/PROT_WRITE/PROT_EXEC
+ * are true independent bits (unlike open()'s access mode), so this
+ * is a plain OR-of-matched-names walk with no special first entry.
+ * value == 0 is its own real, named case (PROT_NONE) rather than
+ * "no flags matched", so it's handled up front. */
+static const flag_entry prot_flag_table[] = {
+    { PROT_READ,  "PROT_READ" },
+    { PROT_WRITE, "PROT_WRITE" },
+    { PROT_EXEC,  "PROT_EXEC" },
+    { 0,          NULL },
+};
+
+static void format_prot_flags(unsigned long long value, char *out, size_t out_size) {
+    if (value == 0) {
+        snprintf(out, out_size, "PROT_NONE");
+        return;
+    }
+    unsigned long long remaining = value;
+    size_t oi = 0;
+    for (int i = 0; prot_flag_table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & prot_flag_table[i].value) == prot_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", prot_flag_table[i].name);
+            remaining &= ~prot_flag_table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+/* mmap()'s flags argument. MAP_SHARED/MAP_PRIVATE are usually
+ * mutually exclusive in practice but aren't a 2-bit enum the way
+ * open()'s access mode is — they're independent bits like everything
+ * else here, so no special first-entry handling is needed. */
+static const flag_entry map_flag_table[] = {
+    { MAP_SHARED,     "MAP_SHARED" },
+    { MAP_PRIVATE,    "MAP_PRIVATE" },
+    { MAP_FIXED,      "MAP_FIXED" },
+    { MAP_ANONYMOUS,  "MAP_ANONYMOUS" },
+    { MAP_GROWSDOWN,  "MAP_GROWSDOWN" },
+    { MAP_DENYWRITE,  "MAP_DENYWRITE" },
+    { MAP_EXECUTABLE, "MAP_EXECUTABLE" },
+    { MAP_LOCKED,     "MAP_LOCKED" },
+    { MAP_NORESERVE,  "MAP_NORESERVE" },
+    { MAP_POPULATE,   "MAP_POPULATE" },
+    { MAP_NONBLOCK,   "MAP_NONBLOCK" },
+    { MAP_STACK,      "MAP_STACK" },
+    { MAP_HUGETLB,    "MAP_HUGETLB" },
+    { 0,              NULL },
+};
+
+static void format_map_flags(unsigned long long value, char *out, size_t out_size) {
+    unsigned long long remaining = value;
+    size_t oi = 0;
+    for (int i = 0; map_flag_table[i].name != NULL && oi < out_size; i++) {
+        if (map_flag_table[i].value != 0 &&
+            (remaining & map_flag_table[i].value) == map_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", map_flag_table[i].name);
+            remaining &= ~map_flag_table[i].value;
+        }
+    }
+    if (oi == 0 || remaining != 0)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1244,6 +1339,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
                     unsigned char open_flags_mask = open_flags_arg_mask(name);
+                    unsigned char prot_flags_mask = prot_flags_arg_mask(name);
+                    unsigned char map_flags_mask = map_flags_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1256,6 +1353,10 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             read_child_argv(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (open_flags_mask & (1 << i))
                             format_open_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (prot_flags_mask & (1 << i))
+                            format_prot_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (map_flags_mask & (1 << i))
+                            format_map_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));

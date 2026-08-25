@@ -217,6 +217,20 @@ out=$($STRACE python3 -c "open('/tmp/mini_strace_test_flagtest.txt', 'w')" 2>&1)
 check_contains "write+create+truncate open decoded" \
     'openat\(.*O_WRONLY\|O_CREAT\|O_TRUNC' "$out"
 
+echo "=== mmap/mprotect flags decoding ==="
+out=$($STRACE /bin/echo hi 2>&1)
+check_contains "anonymous mmap shows PROT_READ|PROT_WRITE" \
+    'mmap\(.*PROT_READ\|PROT_WRITE.*MAP_PRIVATE\|MAP_ANONYMOUS' "$out"
+check_contains "mprotect shows a decoded PROT value" 'mprotect\(.*PROT_(READ|NONE|EXEC|WRITE)' "$out"
+
+out=$($STRACE python3 -c '
+import mmap
+m = mmap.mmap(-1, 4096, prot=mmap.PROT_READ | mmap.PROT_WRITE)
+m.close()
+' 2>&1)
+check_contains "explicit PROT_READ|PROT_WRITE mmap decoded" \
+    'mmap\(.*PROT_READ\|PROT_WRITE.*MAP_SHARED\|MAP_ANONYMOUS' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

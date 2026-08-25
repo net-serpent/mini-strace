@@ -17,9 +17,11 @@ the bytes they're moving, and `connect`/`bind`/`sendto`/`recvfrom`/
 (`{sa_family=AF_INET, sin_port=htons(80),
 sin_addr=inet_addr("1.2.3.4")}` for IPv4, the equivalent for IPv6,
 `{sa_family=AF_UNIX, sun_path="/path"}` for Unix sockets) instead of
-a raw pointer, and `open`/`openat` show their flags decoded
-(`O_WRONLY|O_CREAT|O_TRUNC` instead of `0x241`). You can also narrow
-the trace down with
+a raw pointer, `open`/`openat` show their flags decoded
+(`O_WRONLY|O_CREAT|O_TRUNC` instead of `0x241`), and `mmap`/
+`mprotect` show their protection/mapping flags decoded
+(`PROT_READ|PROT_WRITE`, `MAP_PRIVATE|MAP_ANONYMOUS`). You can also
+narrow the trace down with
 `-e trace=SET`, where SET is a comma-separated mix of categories
 (`file`, `network`, `process`) and/or exact syscall names:
 `-e trace=file` shows only filesystem calls, `-e trace=network,openat`
@@ -299,6 +301,15 @@ not bits of their own, so they're checked (and their bits consumed)
 before their "subset" flag — `O_DSYNC`, `O_DIRECTORY` — gets a chance
 to match on what's left over; get the table order wrong and one real
 flag would print as two.
+
+`mmap`/`mprotect`'s `PROT_*` and `mmap`'s `MAP_*` decoding reuses the
+same OR-of-matched-names approach as `open`'s flags, just without any
+of its wrinkles — `PROT_READ`/`PROT_WRITE`/`PROT_EXEC` and the `MAP_*`
+flags are all genuinely independent bits, no composite values or
+access-mode-style small integers to special-case. `PROT_NONE` (value
+`0`) is handled as its own named case up front, the same way `open`'s
+access mode is, since "no bits matched" and "the value was
+legitimately zero" need to print differently.
 
 ## Requirements
 
