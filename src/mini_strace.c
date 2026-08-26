@@ -270,6 +270,37 @@ static unsigned char map_flags_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds socket()/socketpair()'s domain (arg 0) and
+ * type (arg 1) — both syscalls share the same argument layout for
+ * these two. */
+static const string_arg_entry socket_domain_arg_table[] = {
+    { "socket",      0x01 },  /* arg 0 */
+    { "socketpair",  0x01 },  /* arg 0 */
+    { NULL,          0x00 },
+};
+
+static unsigned char socket_domain_arg_mask(const char *syscall) {
+    for (int i = 0; socket_domain_arg_table[i].name != NULL; i++) {
+        if (strcmp(socket_domain_arg_table[i].name, syscall) == 0)
+            return socket_domain_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+static const string_arg_entry socket_type_arg_table[] = {
+    { "socket",      0x02 },  /* arg 1 */
+    { "socketpair",  0x02 },  /* arg 1 */
+    { NULL,          0x00 },
+};
+
+static unsigned char socket_type_arg_mask(const char *syscall) {
+    for (int i = 0; socket_type_arg_table[i].name != NULL; i++) {
+        if (strcmp(socket_type_arg_table[i].name, syscall) == 0)
+            return socket_type_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Resolves fd to whatever it points to via /proc/pid/fd/N, which is
  * a symlink to the real path (or "socket:[12345]", "pipe:[12345]",
  * etc. for non-path fds — readlink() returns that text as-is, which
@@ -956,6 +987,73 @@ static void format_map_flags(unsigned long long value, char *out, size_t out_siz
         snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
 }
 
+/* socket()/socketpair()'s domain argument. This is a plain enum
+ * value, not independent bits to OR together — exactly one of these
+ * is ever set — so it's a lookup, not a flag walk. Covers the
+ * families this file's own sockaddr decoding already understands
+ * plus the two most common ones it doesn't (netlink and packet
+ * sockets), so a bare number here is rare in practice. */
+static const flag_entry socket_domain_table[] = {
+    { AF_UNIX,    "AF_UNIX" },
+    { AF_INET,    "AF_INET" },
+    { AF_INET6,   "AF_INET6" },
+    { AF_NETLINK, "AF_NETLINK" },
+    { AF_PACKET,  "AF_PACKET" },
+    { AF_UNSPEC,  "AF_UNSPEC" },
+    { 0,          NULL },
+};
+
+static void format_socket_domain(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; socket_domain_table[i].name != NULL; i++) {
+        if (socket_domain_table[i].value == value) {
+            snprintf(out, out_size, "%s", socket_domain_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
+/* socket()/socketpair()'s type argument. Also an enum value, not
+ * independent bits — but Linux additionally lets SOCK_CLOEXEC and
+ * SOCK_NONBLOCK ride along OR'd into the same int (they're just
+ * O_CLOEXEC/O_NONBLOCK reused as socket-type bits, picked because
+ * they don't collide with any real socket type's low bits), so those
+ * two get peeled off and appended the way open()'s flags append
+ * separate names, while the base type underneath is still a lookup
+ * rather than a walk. */
+static const flag_entry socket_type_table[] = {
+    { SOCK_STREAM,    "SOCK_STREAM" },
+    { SOCK_DGRAM,     "SOCK_DGRAM" },
+    { SOCK_RAW,       "SOCK_RAW" },
+    { SOCK_RDM,       "SOCK_RDM" },
+    { SOCK_SEQPACKET, "SOCK_SEQPACKET" },
+    { SOCK_PACKET,    "SOCK_PACKET" },
+    { 0,              NULL },
+};
+
+static void format_socket_type(unsigned long long value, char *out, size_t out_size) {
+    unsigned long long base = value & ~(unsigned long long)(SOCK_CLOEXEC | SOCK_NONBLOCK);
+    const char *base_name = NULL;
+
+    for (int i = 0; socket_type_table[i].name != NULL; i++) {
+        if (socket_type_table[i].value == base) {
+            base_name = socket_type_table[i].name;
+            break;
+        }
+    }
+
+    size_t oi;
+    if (base_name != NULL)
+        oi = (size_t)snprintf(out, out_size, "%s", base_name);
+    else
+        oi = (size_t)snprintf(out, out_size, "0x%llx", base);
+
+    if ((value & (unsigned long long)SOCK_CLOEXEC) && oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, "|SOCK_CLOEXEC");
+    if ((value & (unsigned long long)SOCK_NONBLOCK) && oi < out_size)
+        snprintf(out + oi, out_size - oi, "|SOCK_NONBLOCK");
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1341,6 +1439,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char open_flags_mask = open_flags_arg_mask(name);
                     unsigned char prot_flags_mask = prot_flags_arg_mask(name);
                     unsigned char map_flags_mask = map_flags_arg_mask(name);
+                    unsigned char socket_domain_mask = socket_domain_arg_mask(name);
+                    unsigned char socket_type_mask = socket_type_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1357,6 +1457,10 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_prot_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (map_flags_mask & (1 << i))
                             format_map_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (socket_domain_mask & (1 << i))
+                            format_socket_domain(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (socket_type_mask & (1 << i))
+                            format_socket_type(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));

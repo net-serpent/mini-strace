@@ -231,6 +231,29 @@ m.close()
 check_contains "explicit PROT_READ|PROT_WRITE mmap decoded" \
     'mmap\(.*PROT_READ\|PROT_WRITE.*MAP_SHARED\|MAP_ANONYMOUS' "$out"
 
+echo "=== socket() domain/type decoding ==="
+out=$($STRACE -e trace=network python3 -c '
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.close()
+' 2>&1)
+check_contains "TCP socket domain/type decoded" 'socket\(AF_INET, SOCK_STREAM\|SOCK_CLOEXEC' "$out"
+
+out=$($STRACE -e trace=network python3 -c '
+import socket
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.close()
+' 2>&1)
+check_contains "unix socket domain decoded" 'socket\(AF_UNIX, SOCK_STREAM' "$out"
+
+out=$($STRACE -e trace=network python3 -c '
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM | socket.SOCK_NONBLOCK)
+s.close()
+' 2>&1)
+check_contains "combined SOCK_CLOEXEC|SOCK_NONBLOCK decoded" \
+    'socket\(AF_INET, SOCK_STREAM\|SOCK_CLOEXEC\|SOCK_NONBLOCK' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!
