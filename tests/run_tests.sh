@@ -254,6 +254,19 @@ s.close()
 check_contains "combined SOCK_CLOEXEC|SOCK_NONBLOCK decoded" \
     'socket\(AF_INET, SOCK_STREAM\|SOCK_CLOEXEC\|SOCK_NONBLOCK' "$out"
 
+echo "=== kill() signal decoding ==="
+out=$($STRACE python3 -c '
+import os, signal
+os.kill(os.getpid(), signal.SIGTERM)
+' 2>&1)
+check_contains "SIGTERM decoded" 'kill\([^,]*, SIGTERM' "$out"
+
+out=$($STRACE python3 -c '
+import os
+os.kill(os.getpid(), 0)
+' 2>&1)
+check_contains "null signal (0) printed as plain 0, not a fake name" 'kill\([^,]*, 0,' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

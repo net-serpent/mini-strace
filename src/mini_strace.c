@@ -301,6 +301,23 @@ static unsigned char socket_type_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds kill()/tkill()/tgkill()'s target signal
+ * number, decoded via format_signal_arg() below. */
+static const string_arg_entry signal_arg_table[] = {
+    { "kill",    0x02 },  /* arg 1 */
+    { "tkill",   0x02 },  /* arg 1 */
+    { "tgkill",  0x04 },  /* arg 2 */
+    { NULL,      0x00 },
+};
+
+static unsigned char signal_arg_mask(const char *syscall) {
+    for (int i = 0; signal_arg_table[i].name != NULL; i++) {
+        if (strcmp(signal_arg_table[i].name, syscall) == 0)
+            return signal_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Resolves fd to whatever it points to via /proc/pid/fd/N, which is
  * a symlink to the real path (or "socket:[12345]", "pipe:[12345]",
  * etc. for non-path fds — readlink() returns that text as-is, which
@@ -1054,6 +1071,26 @@ static void format_socket_type(unsigned long long value, char *out, size_t out_s
         snprintf(out + oi, out_size - oi, "|SOCK_NONBLOCK");
 }
 
+/* kill()/tkill()/tgkill()'s target signal number, via the same
+ * sigabbrev_np() already used to name a signal actually being
+ * delivered to the tracee. Signal 0 is its own real, meaningful
+ * value (the "null signal" used purely to test whether a pid exists
+ * and is killable, without sending anything) rather than a signal
+ * name, so it's printed as a plain "0" instead of going through the
+ * lookup. */
+static void format_signal_arg(unsigned long long value, char *out, size_t out_size) {
+    int sig = (int)value;
+    if (sig == 0) {
+        snprintf(out, out_size, "0");
+        return;
+    }
+    const char *abbrev = sigabbrev_np(sig);
+    if (abbrev != NULL)
+        snprintf(out, out_size, "SIG%s", abbrev);
+    else
+        snprintf(out, out_size, "%d", sig);
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1441,6 +1478,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char map_flags_mask = map_flags_arg_mask(name);
                     unsigned char socket_domain_mask = socket_domain_arg_mask(name);
                     unsigned char socket_type_mask = socket_type_arg_mask(name);
+                    unsigned char signal_mask = signal_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1461,6 +1499,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_socket_domain(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (socket_type_mask & (1 << i))
                             format_socket_type(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (signal_mask & (1 << i))
+                            format_signal_arg(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));

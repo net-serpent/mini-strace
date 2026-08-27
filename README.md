@@ -20,13 +20,16 @@ sin_addr=inet_addr("1.2.3.4")}` for IPv4, the equivalent for IPv6,
 a raw pointer, `open`/`openat` show their flags decoded
 (`O_WRONLY|O_CREAT|O_TRUNC` instead of `0x241`), `mmap`/`mprotect`
 show their protection/mapping flags decoded (`PROT_READ|PROT_WRITE`,
-`MAP_PRIVATE|MAP_ANONYMOUS`), and `socket`/`socketpair` show their domain and type decoded
-(`socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, 0x0)` instead of two bare
-hex numbers) — so a socket's whole lifecycle, from creation through
-the address it talks to, traces without any raw hex except the
-protocol argument (almost always `0`, meaning "the default for this
-type", so decoding it wouldn't add much). You can also narrow the
-trace down with
+`MAP_PRIVATE|MAP_ANONYMOUS`), `socket`/`socketpair` show their domain
+and type decoded (`socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, 0x0)`
+instead of two bare hex numbers) — so a socket's whole lifecycle,
+from creation through the address it talks to, traces without any
+raw hex except the protocol argument (almost always `0`, meaning
+"the default for this type", so decoding it wouldn't add much) — and
+`kill`/`tkill`/`tgkill` show the target signal by name (`SIGTERM`
+instead of `0xf`, though the "null signal" `0` — used only to check
+whether a pid exists — still prints as plain `0`). You can also
+narrow the trace down with
 `-e trace=SET`, where SET is a comma-separated mix of categories
 (`file`, `network`, `process`) and/or exact syscall names:
 `-e trace=file` shows only filesystem calls, `-e trace=network,openat`
@@ -326,6 +329,15 @@ OR'd into the same int as the base type (they're literally
 overlap any real socket type's low bits) — so those two get peeled
 off and appended as separate names the way `open`'s flags append,
 while the base type underneath is still a lookup.
+
+`kill`/`tkill`/`tgkill`'s signal number reuses `sigabbrev_np()` —
+already there for naming a signal actually being delivered to the
+tracee — for a completely different purpose: naming the signal
+someone's *about* to send. Signal `0` gets special-cased ahead of
+that lookup, since it's a real, meaningful value in its own right (a
+"can I signal this pid" existence check that sends nothing), not a
+signal name — printing it as `SIG` anything would be actively wrong,
+not just uninformative.
 
 ## Requirements
 
