@@ -267,6 +267,17 @@ os.kill(os.getpid(), 0)
 ' 2>&1)
 check_contains "null signal (0) printed as plain 0, not a fake name" 'kill\([^,]*, 0,' "$out"
 
+echo "=== lseek() whence decoding ==="
+out=$($STRACE python3 -c '
+f = open("/etc/hostname", "rb")
+f.seek(0, 0)
+f.seek(1, 1)
+f.seek(0, 2)
+' 2>&1)
+check_contains "SEEK_SET decoded" 'lseek\(0x[0-9a-f]+, 0x0, SEEK_SET' "$out"
+check_contains "SEEK_CUR decoded" 'lseek\(0x[0-9a-f]+, 0x1, SEEK_CUR' "$out"
+check_contains "SEEK_END decoded" 'lseek\(0x[0-9a-f]+, 0x0, SEEK_END' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

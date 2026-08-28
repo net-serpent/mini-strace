@@ -28,8 +28,9 @@ raw hex except the protocol argument (almost always `0`, meaning
 "the default for this type", so decoding it wouldn't add much) — and
 `kill`/`tkill`/`tgkill` show the target signal by name (`SIGTERM`
 instead of `0xf`, though the "null signal" `0` — used only to check
-whether a pid exists — still prints as plain `0`). You can also
-narrow the trace down with
+whether a pid exists — still prints as plain `0`), and `lseek` shows
+its `whence` argument decoded (`SEEK_SET`/`SEEK_CUR`/`SEEK_END`
+instead of `0`/`1`/`2`). You can also narrow the trace down with
 `-e trace=SET`, where SET is a comma-separated mix of categories
 (`file`, `network`, `process`) and/or exact syscall names:
 `-e trace=file` shows only filesystem calls, `-e trace=network,openat`
@@ -338,6 +339,12 @@ that lookup, since it's a real, meaningful value in its own right (a
 "can I signal this pid" existence check that sends nothing), not a
 signal name — printing it as `SIG` anything would be actively wrong,
 not just uninformative.
+
+`lseek`'s `whence` is the simplest lookup table in the file — a
+straight enum match with no flags to OR and no zero-vs-no-match
+ambiguity to handle, since `SEEK_SET` being `0` is just an ordinary
+table entry here rather than something needing special-case code the
+way `PROT_NONE`/`open`'s access mode did.
 
 ## Requirements
 

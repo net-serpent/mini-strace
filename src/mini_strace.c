@@ -318,6 +318,21 @@ static unsigned char signal_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds lseek()'s whence, decoded via
+ * format_lseek_whence() below. */
+static const string_arg_entry lseek_whence_arg_table[] = {
+    { "lseek",  0x04 },  /* arg 2 */
+    { NULL,     0x00 },
+};
+
+static unsigned char lseek_whence_arg_mask(const char *syscall) {
+    for (int i = 0; lseek_whence_arg_table[i].name != NULL; i++) {
+        if (strcmp(lseek_whence_arg_table[i].name, syscall) == 0)
+            return lseek_whence_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Resolves fd to whatever it points to via /proc/pid/fd/N, which is
  * a symlink to the real path (or "socket:[12345]", "pipe:[12345]",
  * etc. for non-path fds — readlink() returns that text as-is, which
@@ -1091,6 +1106,32 @@ static void format_signal_arg(unsigned long long value, char *out, size_t out_si
         snprintf(out, out_size, "%d", sig);
 }
 
+/* lseek()'s whence argument — a plain enum value like socket()'s
+ * domain, not bits to OR. SEEK_SET happens to be 0, but that's not
+ * special-cased the way PROT_NONE/O_RDONLY are: those needed to
+ * distinguish "the value was legitimately zero" from "no flag bits
+ * matched" in an OR-of-bits walk, but a lookup like this one just
+ * compares against each entry regardless of which one happens to be
+ * zero. */
+static const flag_entry lseek_whence_table[] = {
+    { SEEK_SET,  "SEEK_SET" },
+    { SEEK_CUR,  "SEEK_CUR" },
+    { SEEK_END,  "SEEK_END" },
+    { SEEK_DATA, "SEEK_DATA" },
+    { SEEK_HOLE, "SEEK_HOLE" },
+    { 0,         NULL },
+};
+
+static void format_lseek_whence(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; lseek_whence_table[i].name != NULL; i++) {
+        if (lseek_whence_table[i].value == value) {
+            snprintf(out, out_size, "%s", lseek_whence_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1479,6 +1520,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char socket_domain_mask = socket_domain_arg_mask(name);
                     unsigned char socket_type_mask = socket_type_arg_mask(name);
                     unsigned char signal_mask = signal_arg_mask(name);
+                    unsigned char lseek_whence_mask = lseek_whence_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1501,6 +1543,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_socket_type(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (signal_mask & (1 << i))
                             format_signal_arg(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (lseek_whence_mask & (1 << i))
+                            format_lseek_whence(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));
