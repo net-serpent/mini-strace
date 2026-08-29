@@ -278,6 +278,26 @@ check_contains "SEEK_SET decoded" 'lseek\(0x[0-9a-f]+, 0x0, SEEK_SET' "$out"
 check_contains "SEEK_CUR decoded" 'lseek\(0x[0-9a-f]+, 0x1, SEEK_CUR' "$out"
 check_contains "SEEK_END decoded" 'lseek\(0x[0-9a-f]+, 0x0, SEEK_END' "$out"
 
+echo "=== fcntl() cmd decoding ==="
+out=$($STRACE python3 -c 'pass' 2>&1)
+check_contains "F_GETFD decoded (interpreter startup)" 'fcntl\(0x[0-9a-f]+, F_GETFD' "$out"
+
+out=$($STRACE python3 -c '
+import fcntl, os
+fd = os.open("/etc/hostname", os.O_RDONLY)
+fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 0)
+' 2>&1)
+check_contains "F_DUPFD_CLOEXEC decoded" 'fcntl\(0x[0-9a-f]+, F_DUPFD_CLOEXEC' "$out"
+
+out=$($STRACE python3 -c '
+import fcntl, os
+fd = os.open("/etc/hostname", os.O_RDONLY)
+flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+fcntl.fcntl(fd, fcntl.F_SETFL, flags)
+' 2>&1)
+check_contains "F_GETFL decoded" 'fcntl\(0x[0-9a-f]+, F_GETFL' "$out"
+check_contains "F_SETFL decoded" 'fcntl\(0x[0-9a-f]+, F_SETFL' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

@@ -333,6 +333,21 @@ static unsigned char lseek_whence_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds fcntl()'s cmd, decoded via
+ * format_fcntl_cmd() below. */
+static const string_arg_entry fcntl_cmd_arg_table[] = {
+    { "fcntl",  0x02 },  /* arg 1 */
+    { NULL,     0x00 },
+};
+
+static unsigned char fcntl_cmd_arg_mask(const char *syscall) {
+    for (int i = 0; fcntl_cmd_arg_table[i].name != NULL; i++) {
+        if (strcmp(fcntl_cmd_arg_table[i].name, syscall) == 0)
+            return fcntl_cmd_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Resolves fd to whatever it points to via /proc/pid/fd/N, which is
  * a symlink to the real path (or "socket:[12345]", "pipe:[12345]",
  * etc. for non-path fds — readlink() returns that text as-is, which
@@ -1132,6 +1147,48 @@ static void format_lseek_whence(unsigned long long value, char *out, size_t out_
     snprintf(out, out_size, "0x%llx", value);
 }
 
+/* fcntl()'s cmd argument — another plain enum lookup, like
+ * lseek()'s whence. F_DUPFD is 0 here for the same non-reason
+ * SEEK_SET being 0 wasn't a problem there: this is a value lookup,
+ * not an OR-of-bits walk, so which entry happens to be zero doesn't
+ * matter. Real macros from <fcntl.h> rather than hardcoded numbers —
+ * F_GETLK/F_SETLK/F_SETLKW in particular have differed across
+ * architectures and 32-vs-64-bit off_t builds historically, so
+ * trusting the libc header sidesteps that entirely. Only the cmd
+ * itself is decoded; the meaning of fcntl's third argument depends
+ * on which cmd this is (a flags value, a struct flock*, ignored,
+ * ...) and is left as plain hex, same as before this change. */
+static const flag_entry fcntl_cmd_table[] = {
+    { F_DUPFD,         "F_DUPFD" },
+    { F_DUPFD_CLOEXEC, "F_DUPFD_CLOEXEC" },
+    { F_GETFD,         "F_GETFD" },
+    { F_SETFD,         "F_SETFD" },
+    { F_GETFL,         "F_GETFL" },
+    { F_SETFL,         "F_SETFL" },
+    { F_GETLK,         "F_GETLK" },
+    { F_SETLK,         "F_SETLK" },
+    { F_SETLKW,        "F_SETLKW" },
+    { F_GETOWN,        "F_GETOWN" },
+    { F_SETOWN,        "F_SETOWN" },
+    { F_GETSIG,        "F_GETSIG" },
+    { F_SETSIG,        "F_SETSIG" },
+    { F_SETLEASE,      "F_SETLEASE" },
+    { F_GETLEASE,      "F_GETLEASE" },
+    { F_SETPIPE_SZ,    "F_SETPIPE_SZ" },
+    { F_GETPIPE_SZ,    "F_GETPIPE_SZ" },
+    { 0,               NULL },
+};
+
+static void format_fcntl_cmd(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; fcntl_cmd_table[i].name != NULL; i++) {
+        if (fcntl_cmd_table[i].value == value) {
+            snprintf(out, out_size, "%s", fcntl_cmd_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1521,6 +1578,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char socket_type_mask = socket_type_arg_mask(name);
                     unsigned char signal_mask = signal_arg_mask(name);
                     unsigned char lseek_whence_mask = lseek_whence_arg_mask(name);
+                    unsigned char fcntl_cmd_mask = fcntl_cmd_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1545,6 +1603,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_signal_arg(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (lseek_whence_mask & (1 << i))
                             format_lseek_whence(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (fcntl_cmd_mask & (1 << i))
+                            format_fcntl_cmd(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));

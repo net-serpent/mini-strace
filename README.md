@@ -8,33 +8,41 @@ A stripped-down clone of `strace`, built on Linux's `ptrace(2)` API.
 
 Traces a target program and prints every syscall: name, arguments,
 return value. Failed calls show the errno name (`ENOENT`, not `2`).
-A handful of common syscalls get extra treatment `open`/`stat`/
-`execve`/`symlink`/`link`/`mount` and friends show their path
-arguments as actual strings instead of pointers, `execve`/`execveat`
-show their `argv`/`envp` arrays decoded too, `read`/`write` show
-the bytes they're moving, and `connect`/`bind`/`sendto`/`recvfrom`/
-`accept`/`getsockname`/`getpeername` show the socket address decoded
-(`{sa_family=AF_INET, sin_port=htons(80),
-sin_addr=inet_addr("1.2.3.4")}` for IPv4, the equivalent for IPv6,
-`{sa_family=AF_UNIX, sun_path="/path"}` for Unix sockets) instead of
-a raw pointer, `open`/`openat` show their flags decoded
-(`O_WRONLY|O_CREAT|O_TRUNC` instead of `0x241`), `mmap`/`mprotect`
-show their protection/mapping flags decoded (`PROT_READ|PROT_WRITE`,
-`MAP_PRIVATE|MAP_ANONYMOUS`), `socket`/`socketpair` show their domain
-and type decoded (`socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, 0x0)`
-instead of two bare hex numbers) — so a socket's whole lifecycle,
-from creation through the address it talks to, traces without any
-raw hex except the protocol argument (almost always `0`, meaning
-"the default for this type", so decoding it wouldn't add much) — and
-`kill`/`tkill`/`tgkill` show the target signal by name (`SIGTERM`
-instead of `0xf`, though the "null signal" `0` — used only to check
-whether a pid exists — still prints as plain `0`), and `lseek` shows
-its `whence` argument decoded (`SEEK_SET`/`SEEK_CUR`/`SEEK_END`
-instead of `0`/`1`/`2`). You can also narrow the trace down with
-`-e trace=SET`, where SET is a comma-separated mix of categories
-(`file`, `network`, `process`) and/or exact syscall names:
-`-e trace=file` shows only filesystem calls, `-e trace=network,openat`
-shows networking plus that one specific syscall:
+A number of common syscalls get extra treatment instead of printing
+a bare pointer or a raw number:
+
+- `open`/`stat`/`execve`/`symlink`/`link`/`mount` and friends show
+  their path arguments as actual strings
+- `execve`/`execveat` show their `argv`/`envp` arrays decoded
+- `read`/`write` show the bytes they're moving
+- `connect`/`bind`/`sendto`/`recvfrom`/`accept`/`getsockname`/
+  `getpeername` show the socket address decoded — `{sa_family=AF_INET,
+  sin_port=htons(80), sin_addr=inet_addr("1.2.3.4")}` for IPv4, the
+  equivalent for IPv6, `{sa_family=AF_UNIX, sun_path="/path"}` for
+  Unix sockets
+- `open`/`openat` show their flags decoded (`O_WRONLY|O_CREAT|O_TRUNC`
+  instead of `0x241`)
+- `mmap`/`mprotect` show their protection/mapping flags decoded
+  (`PROT_READ|PROT_WRITE`, `MAP_PRIVATE|MAP_ANONYMOUS`)
+- `socket`/`socketpair` show their domain and type decoded
+  (`socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, 0x0)` instead of two
+  bare hex numbers) — so a socket's whole lifecycle, from creation
+  through the address it talks to, traces without any raw hex except
+  the protocol argument (almost always `0`, meaning "the default for
+  this type", so decoding it wouldn't add much)
+- `kill`/`tkill`/`tgkill` show the target signal by name (`SIGTERM`
+  instead of `0xf`, though the "null signal" `0` — used only to check
+  whether a pid exists — still prints as plain `0`)
+- `lseek` shows its `whence` argument decoded
+  (`SEEK_SET`/`SEEK_CUR`/`SEEK_END` instead of `0`/`1`/`2`)
+- `fcntl` shows its `cmd` argument decoded (`F_GETFD`, `F_SETFL`,
+  `F_DUPFD_CLOEXEC`, ...)
+
+You can also narrow the trace down with `-e trace=SET`, where SET is
+a comma-separated mix of categories (`file`, `network`, `process`)
+and/or exact syscall names: `-e trace=file` shows only filesystem
+calls, `-e trace=network,openat` shows networking plus that one
+specific syscall:
 
 ```
 execve("/bin/cat", ["cat", "foo.txt"], ["PATH=/usr/bin", "HOME=/root"], 0xffffffff, 0x7f45c4f4c740) = 0
@@ -345,6 +353,14 @@ straight enum match with no flags to OR and no zero-vs-no-match
 ambiguity to handle, since `SEEK_SET` being `0` is just an ordinary
 table entry here rather than something needing special-case code the
 way `PROT_NONE`/`open`'s access mode did.
+
+`fcntl`'s `cmd` is the same kind of lookup, just a longer table —
+`F_DUPFD`, `F_GETFD`/`F_SETFD`, `F_GETFL`/`F_SETFL`,
+`F_GETLK`/`F_SETLK`/`F_SETLKW`, and a handful more. Only `cmd` itself
+gets decoded; what the third argument means depends entirely on
+which `cmd` this is (a flags value for `F_SETFL`, a `struct flock*`
+for the locking commands, ignored for others), so it's left as plain
+hex rather than trying to interpret it differently per command.
 
 ## Requirements
 
