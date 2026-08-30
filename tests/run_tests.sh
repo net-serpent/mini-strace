@@ -298,6 +298,25 @@ fcntl.fcntl(fd, fcntl.F_SETFL, flags)
 check_contains "F_GETFL decoded" 'fcntl\(0x[0-9a-f]+, F_GETFL' "$out"
 check_contains "F_SETFL decoded" 'fcntl\(0x[0-9a-f]+, F_SETFL' "$out"
 
+echo "=== rt_sigprocmask() how decoding ==="
+out=$($STRACE python3 -c '
+import signal
+signal.pthread_sigmask(signal.SIG_BLOCK, [signal.SIGTERM])
+' 2>&1)
+check_contains "SIG_BLOCK decoded" 'rt_sigprocmask\(SIG_BLOCK' "$out"
+
+out=$($STRACE python3 -c '
+import signal
+signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGTERM])
+' 2>&1)
+check_contains "SIG_UNBLOCK decoded" 'rt_sigprocmask\(SIG_UNBLOCK' "$out"
+
+out=$($STRACE python3 -c '
+import signal
+signal.pthread_sigmask(signal.SIG_SETMASK, [])
+' 2>&1)
+check_contains "SIG_SETMASK decoded" 'rt_sigprocmask\(SIG_SETMASK' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

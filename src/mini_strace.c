@@ -68,6 +68,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <signal.h>
 
 #if defined(__aarch64__)
 #include <sys/uio.h>
@@ -344,6 +345,21 @@ static unsigned char fcntl_cmd_arg_mask(const char *syscall) {
     for (int i = 0; fcntl_cmd_arg_table[i].name != NULL; i++) {
         if (strcmp(fcntl_cmd_arg_table[i].name, syscall) == 0)
             return fcntl_cmd_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds rt_sigprocmask()'s how, decoded via
+ * format_sigprocmask_how() below. */
+static const string_arg_entry sigprocmask_how_arg_table[] = {
+    { "rt_sigprocmask",  0x01 },  /* arg 0 */
+    { NULL,              0x00 },
+};
+
+static unsigned char sigprocmask_how_arg_mask(const char *syscall) {
+    for (int i = 0; sigprocmask_how_arg_table[i].name != NULL; i++) {
+        if (strcmp(sigprocmask_how_arg_table[i].name, syscall) == 0)
+            return sigprocmask_how_arg_table[i].str_args;
     }
     return 0;
 }
@@ -1189,6 +1205,31 @@ static void format_fcntl_cmd(unsigned long long value, char *out, size_t out_siz
     snprintf(out, out_size, "0x%llx", value);
 }
 
+/* rt_sigprocmask()'s how argument — same plain-enum-lookup shape as
+ * lseek()'s whence and fcntl()'s cmd. SIG_BLOCK is 0 here for the
+ * same non-reason SEEK_SET/F_DUPFD being 0 wasn't a problem for
+ * those: a value lookup doesn't care which entry happens to be
+ * zero. Only x86-64 and aarch64 are supported by this file (see the
+ * header comment), and neither has a legacy sigprocmask(2) syscall
+ * of its own — signal mask changes go through rt_sigprocmask on
+ * both — so that's the only name this needs to match. */
+static const flag_entry sigprocmask_how_table[] = {
+    { SIG_BLOCK,   "SIG_BLOCK" },
+    { SIG_UNBLOCK, "SIG_UNBLOCK" },
+    { SIG_SETMASK, "SIG_SETMASK" },
+    { 0,           NULL },
+};
+
+static void format_sigprocmask_how(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; sigprocmask_how_table[i].name != NULL; i++) {
+        if (sigprocmask_how_table[i].value == value) {
+            snprintf(out, out_size, "%s", sigprocmask_how_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1579,6 +1620,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char signal_mask = signal_arg_mask(name);
                     unsigned char lseek_whence_mask = lseek_whence_arg_mask(name);
                     unsigned char fcntl_cmd_mask = fcntl_cmd_arg_mask(name);
+                    unsigned char sigprocmask_how_mask = sigprocmask_how_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1605,6 +1647,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_lseek_whence(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (fcntl_cmd_mask & (1 << i))
                             format_fcntl_cmd(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (sigprocmask_how_mask & (1 << i))
+                            format_sigprocmask_how(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));

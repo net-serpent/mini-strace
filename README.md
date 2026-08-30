@@ -37,6 +37,8 @@ a bare pointer or a raw number:
   (`SEEK_SET`/`SEEK_CUR`/`SEEK_END` instead of `0`/`1`/`2`)
 - `fcntl` shows its `cmd` argument decoded (`F_GETFD`, `F_SETFL`,
   `F_DUPFD_CLOEXEC`, ...)
+- `rt_sigprocmask` shows its `how` argument decoded (`SIG_BLOCK`/
+  `SIG_UNBLOCK`/`SIG_SETMASK` instead of `0`/`1`/`2`)
 
 You can also narrow the trace down with `-e trace=SET`, where SET is
 a comma-separated mix of categories (`file`, `network`, `process`)
@@ -361,6 +363,14 @@ gets decoded; what the third argument means depends entirely on
 which `cmd` this is (a flags value for `F_SETFL`, a `struct flock*`
 for the locking commands, ignored for others), so it's left as plain
 hex rather than trying to interpret it differently per command.
+
+`rt_sigprocmask`'s `how` is the same lookup shape once more —
+`SIG_BLOCK` being `0` isn't special-cased for the same reason
+`SEEK_SET`/`F_DUPFD` weren't. The name itself is worth a note: only
+x86-64 and aarch64 are supported here, and neither has a legacy
+`sigprocmask(2)` syscall of its own (that's an older/32-bit-only
+syscall number) — signal mask changes go through `rt_sigprocmask` on
+both, so that's the only syscall name this needed to match.
 
 ## Requirements
 
