@@ -317,6 +317,19 @@ signal.pthread_sigmask(signal.SIG_SETMASK, [])
 ' 2>&1)
 check_contains "SIG_SETMASK decoded" 'rt_sigprocmask\(SIG_SETMASK' "$out"
 
+echo "=== access()/faccessat() mode decoding ==="
+out=$($STRACE python3 -c '
+import os
+os.access("/etc/hostname", os.F_OK)
+' 2>&1)
+check_contains "F_OK decoded" '(access|faccessat)\([^)]*, F_OK' "$out"
+
+out=$($STRACE python3 -c '
+import os
+os.access("/etc/hostname", os.R_OK | os.W_OK)
+' 2>&1)
+check_contains "combined R_OK|W_OK decoded" '(access|faccessat)\([^)]*, R_OK\|W_OK' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

@@ -39,6 +39,9 @@ a bare pointer or a raw number:
   `F_DUPFD_CLOEXEC`, ...)
 - `rt_sigprocmask` shows its `how` argument decoded (`SIG_BLOCK`/
   `SIG_UNBLOCK`/`SIG_SETMASK` instead of `0`/`1`/`2`)
+- `access`/`faccessat`/`faccessat2` show their `mode` argument
+  decoded (`R_OK|W_OK` instead of `0x6`, `F_OK` for a plain
+  existence check)
 
 You can also narrow the trace down with `-e trace=SET`, where SET is
 a comma-separated mix of categories (`file`, `network`, `process`)
@@ -371,6 +374,14 @@ x86-64 and aarch64 are supported here, and neither has a legacy
 `sigprocmask(2)` syscall of its own (that's an older/32-bit-only
 syscall number) — signal mask changes go through `rt_sigprocmask` on
 both, so that's the only syscall name this needed to match.
+
+`access`'s `mode` argument goes back to an OR-of-bits walk — the
+same shape as `PROT_*`/`MAP_*`, not the plain lookups the last few
+arguments were — since `R_OK`/`W_OK`/`X_OK` are genuinely combinable
+(checking "can I read and write this file" is one call with both
+bits set). `F_OK` (value `0`, "does this path exist at all") gets
+the same up-front special case `PROT_NONE` did, for the same reason:
+it needs to print differently from "no bits matched."
 
 ## Requirements
 

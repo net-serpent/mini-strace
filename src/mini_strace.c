@@ -364,6 +364,23 @@ static unsigned char sigprocmask_how_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds access()/faccessat()/faccessat2()'s mode,
+ * decoded via format_access_mode() below. */
+static const string_arg_entry access_mode_arg_table[] = {
+    { "access",      0x02 },  /* arg 1 */
+    { "faccessat",   0x04 },  /* arg 2 */
+    { "faccessat2",  0x04 },  /* arg 2 */
+    { NULL,          0x00 },
+};
+
+static unsigned char access_mode_arg_mask(const char *syscall) {
+    for (int i = 0; access_mode_arg_table[i].name != NULL; i++) {
+        if (strcmp(access_mode_arg_table[i].name, syscall) == 0)
+            return access_mode_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Resolves fd to whatever it points to via /proc/pid/fd/N, which is
  * a symlink to the real path (or "socket:[12345]", "pipe:[12345]",
  * etc. for non-path fds — readlink() returns that text as-is, which
@@ -1230,6 +1247,36 @@ static void format_sigprocmask_how(unsigned long long value, char *out, size_t o
     snprintf(out, out_size, "0x%llx", value);
 }
 
+/* access()/faccessat()/faccessat2()'s mode argument — back to an
+ * OR-of-bits walk like the PROT_ or MAP_ flags, not a plain lookup like
+ * whence/cmd/how, since R_OK/W_OK/X_OK are genuinely independent and
+ * combinable (checking "can I read and write this" is one call with
+ * both bits set). F_OK (value 0, "does this path exist at all") is
+ * its own named case up front, same reasoning as PROT_NONE. */
+static const flag_entry access_mode_table[] = {
+    { R_OK, "R_OK" },
+    { W_OK, "W_OK" },
+    { X_OK, "X_OK" },
+    { 0,    NULL },
+};
+
+static void format_access_mode(unsigned long long value, char *out, size_t out_size) {
+    if (value == 0) {
+        snprintf(out, out_size, "F_OK");
+        return;
+    }
+    unsigned long long remaining = value;
+    size_t oi = 0;
+    for (int i = 0; access_mode_table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & access_mode_table[i].value) == access_mode_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", access_mode_table[i].name);
+            remaining &= ~access_mode_table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1621,6 +1668,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char lseek_whence_mask = lseek_whence_arg_mask(name);
                     unsigned char fcntl_cmd_mask = fcntl_cmd_arg_mask(name);
                     unsigned char sigprocmask_how_mask = sigprocmask_how_arg_mask(name);
+                    unsigned char access_mode_mask = access_mode_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1649,6 +1697,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_fcntl_cmd(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (sigprocmask_how_mask & (1 << i))
                             format_sigprocmask_how(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (access_mode_mask & (1 << i))
+                            format_access_mode(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));
