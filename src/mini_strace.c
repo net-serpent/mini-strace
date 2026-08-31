@@ -381,6 +381,25 @@ static unsigned char access_mode_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds clock_gettime()/clock_settime()/
+ * clock_getres()/clock_nanosleep()'s clockid, decoded via
+ * format_clockid() below — all four take it as arg 0. */
+static const string_arg_entry clockid_arg_table[] = {
+    { "clock_gettime",     0x01 },
+    { "clock_settime",     0x01 },
+    { "clock_getres",      0x01 },
+    { "clock_nanosleep",   0x01 },
+    { NULL,                0x00 },
+};
+
+static unsigned char clockid_arg_mask(const char *syscall) {
+    for (int i = 0; clockid_arg_table[i].name != NULL; i++) {
+        if (strcmp(clockid_arg_table[i].name, syscall) == 0)
+            return clockid_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Resolves fd to whatever it points to via /proc/pid/fd/N, which is
  * a symlink to the real path (or "socket:[12345]", "pipe:[12345]",
  * etc. for non-path fds — readlink() returns that text as-is, which
@@ -1277,6 +1296,32 @@ static void format_access_mode(unsigned long long value, char *out, size_t out_s
         snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
 }
 
+/* clock_gettime()/clock_settime()/clock_getres()/clock_nanosleep()'s
+ * clockid argument — another plain enum lookup, like whence/cmd/how.
+ * CLOCK_REALTIME being 0 isn't special-cased for the usual reason: a
+ * value lookup doesn't care which entry happens to be zero. */
+static const flag_entry clockid_table[] = {
+    { CLOCK_REALTIME,           "CLOCK_REALTIME" },
+    { CLOCK_MONOTONIC,          "CLOCK_MONOTONIC" },
+    { CLOCK_PROCESS_CPUTIME_ID, "CLOCK_PROCESS_CPUTIME_ID" },
+    { CLOCK_THREAD_CPUTIME_ID,  "CLOCK_THREAD_CPUTIME_ID" },
+    { CLOCK_MONOTONIC_RAW,      "CLOCK_MONOTONIC_RAW" },
+    { CLOCK_REALTIME_COARSE,    "CLOCK_REALTIME_COARSE" },
+    { CLOCK_MONOTONIC_COARSE,   "CLOCK_MONOTONIC_COARSE" },
+    { CLOCK_BOOTTIME,           "CLOCK_BOOTTIME" },
+    { 0,                        NULL },
+};
+
+static void format_clockid(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; clockid_table[i].name != NULL; i++) {
+        if (clockid_table[i].value == value) {
+            snprintf(out, out_size, "%s", clockid_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
 #if defined(__x86_64__)
 
 typedef struct user_regs_struct arch_regs_t;
@@ -1669,6 +1714,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char fcntl_cmd_mask = fcntl_cmd_arg_mask(name);
                     unsigned char sigprocmask_how_mask = sigprocmask_how_arg_mask(name);
                     unsigned char access_mode_mask = access_mode_arg_mask(name);
+                    unsigned char clockid_mask = clockid_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -1699,6 +1745,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_sigprocmask_how(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (access_mode_mask & (1 << i))
                             format_access_mode(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (clockid_mask & (1 << i))
+                            format_clockid(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));

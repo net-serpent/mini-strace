@@ -42,6 +42,9 @@ a bare pointer or a raw number:
 - `access`/`faccessat`/`faccessat2` show their `mode` argument
   decoded (`R_OK|W_OK` instead of `0x6`, `F_OK` for a plain
   existence check)
+- `clock_gettime`/`clock_settime`/`clock_getres`/`clock_nanosleep`
+  show their `clockid` decoded (`CLOCK_REALTIME`/`CLOCK_MONOTONIC`
+  instead of `0`/`1`)
 
 You can also narrow the trace down with `-e trace=SET`, where SET is
 a comma-separated mix of categories (`file`, `network`, `process`)
@@ -382,6 +385,16 @@ arguments were — since `R_OK`/`W_OK`/`X_OK` are genuinely combinable
 bits set). `F_OK` (value `0`, "does this path exist at all") gets
 the same up-front special case `PROT_NONE` did, for the same reason:
 it needs to print differently from "no bits matched."
+
+`clock_gettime`/`clock_nanosleep`'s `clockid` is back to a plain
+lookup, same as `lseek`/`fcntl`/`rt_sigprocmask`. Worth knowing if
+you go looking for it: `time.time()`/`time.monotonic()` and friends
+in most languages don't actually reach this syscall at all — glibc
+serves them straight from the VDSO, a page of code mapped into every
+process that reads the kernel's clock data directly, skipping the
+syscall (and the context switch) entirely. Slower clocks like
+`CLOCK_PROCESS_CPUTIME_ID`, or anything called through `syscall()`
+directly, still show up normally.
 
 ## Requirements
 

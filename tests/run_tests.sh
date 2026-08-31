@@ -330,6 +330,26 @@ os.access("/etc/hostname", os.R_OK | os.W_OK)
 ' 2>&1)
 check_contains "combined R_OK|W_OK decoded" '(access|faccessat)\([^)]*, R_OK\|W_OK' "$out"
 
+echo "=== clockid decoding ==="
+# glibc serves time.time()/time.monotonic() from the VDSO (no real
+# syscall at all), so a direct syscall() call is used here instead
+# to force an actual clock_gettime syscall mini-strace can see.
+cat >/tmp/mini_strace_test_clock.c <<'EOF'
+#include <time.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+int main(void) {
+    struct timespec ts;
+    syscall(SYS_clock_gettime, CLOCK_REALTIME, &ts);
+    syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &ts);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_clock /tmp/mini_strace_test_clock.c
+out=$($STRACE /tmp/mini_strace_test_clock 2>&1)
+check_contains "CLOCK_REALTIME decoded" 'clock_gettime\(CLOCK_REALTIME' "$out"
+check_contains "CLOCK_MONOTONIC decoded" 'clock_gettime\(CLOCK_MONOTONIC' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!
