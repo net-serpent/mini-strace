@@ -1,6 +1,11 @@
 CC := gcc
 CFLAGS := -Wall -Wextra -O2 -std=gnu11
-SRC := src/mini_strace.c
+# One .o per module: arg_routing (syscall+arg lookup tables),
+# trace_filter (-e trace=SET), child_mem (ptrace-peek memory reads),
+# decoders (raw value -> readable string), and mini_strace itself
+# (the tracer loop, arch register access via arch.h, and main()).
+SRCS := src/arg_routing.c src/trace_filter.c src/child_mem.c src/decoders.c src/mini_strace.c
+OBJS := $(SRCS:.c=.o)
 BIN := mini-strace
 SYSCALL_TABLE := src/syscall_names.h
 
@@ -14,11 +19,16 @@ all: $(BIN)
 $(SYSCALL_TABLE):
 	bash scripts/gen_syscall_table.sh > $(SYSCALL_TABLE)
 
-$(BIN): $(SRC) $(SYSCALL_TABLE)
-	$(CC) $(CFLAGS) -o $(BIN) $(SRC)
+src/mini_strace.o: src/mini_strace.c $(SYSCALL_TABLE)
+
+%.o: %.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BIN): $(OBJS)
+	$(CC) $(CFLAGS) -o $(BIN) $(OBJS)
 
 run: $(BIN)
 	./$(BIN) /bin/echo hello world
 
 clean:
-	rm -f $(BIN) $(SYSCALL_TABLE)
+	rm -f $(BIN) $(OBJS) $(SYSCALL_TABLE)

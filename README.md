@@ -174,6 +174,38 @@ sandboxes restrict `PTRACE_ATTACH` to direct descendants only.
 
 ## How it works
 
+### Source layout
+
+This started as one file and grew past 2000 lines as decoding
+coverage expanded, so it's split by what each part actually knows
+about rather than by when it was added:
+
+- **`src/mini_strace.c`** — the tracer loop itself (`run_tracer()`),
+  per-tracee state, the `-c` summary table, and `main()`'s argument
+  parsing. The part that decides *when* to call everything else.
+- **`src/arch.h`** — x86-64/ARM64 register access. Header-only: it's
+  small, purely `static`, and used only by `run_tracer()`, so a
+  separate translation unit would add nothing.
+- **`src/arg_routing.{c,h}`** — "which argument slot(s) of this
+  syscall hold a value of kind X" lookup tables, keyed by syscall
+  name. Says *where* to look, nothing about *how* to read or format
+  what's there.
+- **`src/child_mem.{c,h}`** — the `PTRACE_PEEKDATA` primitives that
+  actually read bytes out of the traced process's address space
+  (strings, buffers, `argv`/`envp` arrays, raw structs).
+- **`src/decoders.{c,h}`** — turning a raw value into something
+  readable, once `arg_routing` has already said which argument this
+  is: every `format_*` function and the value→name tables behind
+  them (`O_*`, `PROT_*`, `AF_*`, signal names, ...).
+
+`arg_routing` and `trace_filter` (the `-e trace=SET` machinery, also
+its own module) don't depend on anything else in the project — pure
+lookup tables. `decoders` depends on `child_mem` (to dereference
+pointers it's given). `mini_strace.c` depends on all four, plus
+`arch.h`. No circular dependencies, checked by the link succeeding
+at all — a genuine cycle between `.c` files here would be a build
+error, not just an architecture smell.
+
 The child does `PTRACE_TRACEME` then `SIGSTOP`s itself before
 `execvp`. The parent waits for that, then loops on `PTRACE_SYSCALL`,
 which stops the child at every syscall entry and exit and lets the
