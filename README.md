@@ -3,6 +3,7 @@
 [![CI](https://github.com/net-serpent/stracebeta/actions/workflows/ci.yml/badge.svg)](https://github.com/net-serpent/stracebeta/actions/workflows/ci.yml)
 
 A stripped-down clone of `strace`, built on Linux's `ptrace(2)` API.
+See [CHANGELOG.md](CHANGELOG.md) for what's new release to release.
 
 ## What it does
 

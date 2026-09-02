@@ -1,5 +1,6 @@
 /*
- * mini-strace v1.0
+ * mini-strace v1.0.0 — see CHANGELOG.md for what's changed release
+ * to release.
  *
  * Minimal syscall tracer using ptrace(2). Runs a child process,
  * stops it on every syscall entry/exit, prints the syscall name,
