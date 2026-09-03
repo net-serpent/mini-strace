@@ -24,3 +24,6 @@ jobs:
 
       - name: Run tests
         run: bash tests/run_tests.sh
+
+      - name: Run property tests (ASan/UBSan)
+        run: make property-test

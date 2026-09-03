@@ -273,7 +273,7 @@ void format_map_flags(unsigned long long value, char *out, size_t out_size) {
             remaining &= ~map_flag_table[i].value;
         }
     }
-    if (oi == 0 || remaining != 0)
+    if ((oi == 0 || remaining != 0) && oi < out_size)
         snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
 }
 

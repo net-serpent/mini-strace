@@ -1,4 +1,5 @@
 mini-strace
+tests/property_test_decoders
 *.o
 *.out
 core

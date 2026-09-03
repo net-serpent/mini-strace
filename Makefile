@@ -30,5 +30,23 @@ $(BIN): $(OBJS)
 run: $(BIN)
 	./$(BIN) /bin/echo hello world
 
+# Property tests for the pure format_* decoders (decoders.c) — no
+# ptrace, no traced process needed, so this builds as its own small
+# binary straight from source rather than reusing $(OBJS), with
+# ASan/UBSan enabled to actually catch an out-of-bounds write instead
+# of just hoping one doesn't happen to corrupt something visible.
+# See tests/property_test_decoders.c for what's actually checked.
+PROPERTY_TEST_BIN := tests/property_test_decoders
+PROPERTY_TEST_SRCS := tests/property_test_decoders.c src/decoders.c src/child_mem.c
+
+.PHONY: property-test
+
+property-test: $(PROPERTY_TEST_BIN)
+	./$(PROPERTY_TEST_BIN)
+
+$(PROPERTY_TEST_BIN): $(PROPERTY_TEST_SRCS) $(wildcard src/*.h)
+	$(CC) -Wall -Wextra -O1 -g -fsanitize=address,undefined -std=gnu11 \
+		-o $(PROPERTY_TEST_BIN) $(PROPERTY_TEST_SRCS)
+
 clean:
-	rm -f $(BIN) $(OBJS) $(SYSCALL_TABLE)
+	rm -f $(BIN) $(OBJS) $(SYSCALL_TABLE) $(PROPERTY_TEST_BIN)

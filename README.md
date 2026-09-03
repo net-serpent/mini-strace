@@ -173,6 +173,36 @@ One test (`-p` attach to a sibling process) is skipped rather than
 failed if the environment's ptrace permissions don't allow it — some
 sandboxes restrict `PTRACE_ATTACH` to direct descendants only.
 
+### Property tests
+
+`tests/property_test_decoders.c` covers the part of this codebase
+that's actually testable in isolation without a real `ptrace`
+session: the pure `format_*` decoders in `decoders.c`, which take a
+raw value and an output buffer and don't touch the tracee's memory
+at all. Every decoder gets run against a spread of hand-picked edge
+values (`0`, all bits set, sign-extended 32-bit patterns, ...) plus a
+large deterministic pseudo-random stream, each crossed against
+output buffer sizes from `0` up to the real cap — built with
+`-fsanitize=address,undefined` so a decoder that writes even one byte
+past the size it was told it had aborts immediately instead of
+silently corrupting something else. This is exactly how it caught a
+real bug during development: `format_map_flags`'s final fallback
+`snprintf` was missing the `oi < out_size` guard every other decoder
+here has, so a long enough flag combination into a small enough
+buffer produced a `size_t` underflow (`out_size - oi` wrapping to a
+huge number) and a heap-buffer-overflow.
+
+```bash
+make property-test
+```
+
+Not a coverage-guided fuzzer (no libFuzzer/AFL, no corpus) — the
+`read_child_*` functions in `child_mem.c` that do the actual
+`PTRACE_PEEKDATA` calls aren't covered by this harness at all, since
+fuzzing those for real would mean either mocking `ptrace(2)` itself
+or driving a real traced process into adversarial memory layouts,
+neither of which this harness attempts.
+
 ## How it works
 
 ### Source layout

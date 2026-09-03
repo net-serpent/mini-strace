@@ -14,6 +14,28 @@ when they ship.
 
 ## [Unreleased]
 
+### Added
+
+- `tests/property_test_decoders.c`: property tests for the pure
+  `format_*` decoders in `decoders.c` (no `ptrace` dependency — the
+  part of this codebase actually testable in isolation), built with
+  `-fsanitize=address,undefined` and run via `make property-test`
+  (also wired into CI). Sweeps hand-picked edge values and a large
+  deterministic random stream against a spread of output buffer
+  sizes down to 0.
+
+### Fixed
+
+- `format_map_flags`'s final fallback `snprintf` call was missing
+  the `oi < out_size` guard every other decoder in the file has —
+  found by the new property tests on their very first run. A long
+  enough combination of `mmap` flags into a small enough output
+  buffer could make `oi` exceed `out_size` (a normal, expected
+  outcome of `snprintf`'s C99 return-value semantics: it reports how
+  much it *would* have written, not how much fit), and the missing
+  guard let `out_size - oi` underflow as an unsigned subtraction,
+  turning into a heap-buffer-overflow.
+
 ## [1.0.0] - 2026-09-01
 
 ### Added — core tracing
