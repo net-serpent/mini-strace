@@ -1,86 +1,80 @@
 # Changelog
 
 All notable changes to this project are documented here. Format is
-based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
-versions are tagged in git from `v1.0.0` onward.
+based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+Versions are tagged in git from `v1.0.0` onward.
 
-`v1.0.0` covers everything built before this file existed — the
-project had no tags or release process before now, so rather than
-inventing a `v0.1`/`v0.2`/... history for points that were never
-actually cut as releases, this first entry summarizes the whole
-run-up in one place. From here on, new entries land under
-`[Unreleased]` as they're built, and get a real version + git tag
-when they ship.
+The project had no tags or release process before `v1.0.0`. Rather
+than reconstructing a `v0.1`/`v0.2`/... history for points that were
+never actually cut as releases, the `v1.0.0` entry summarizes
+everything built up to that point in one place. New entries land
+under `[Unreleased]` as they are built and get a version + git tag
+on release.
 
 ## [Unreleased]
 
 ### Added
 
 - `tests/property_test_decoders.c`: property tests for the pure
-  `format_*` decoders in `decoders.c` (no `ptrace` dependency — the
-  part of this codebase actually testable in isolation), built with
-  `-fsanitize=address,undefined` and run via `make property-test`
-  (also wired into CI). Sweeps hand-picked edge values and a large
-  deterministic random stream against a spread of output buffer
-  sizes down to 0.
+  `format_*` decoders in `decoders.c` (no `ptrace` dependency).
+  Built with `-fsanitize=address,undefined`, run via
+  `make property-test`, wired into CI. Sweeps hand-picked edge
+  values and a deterministic random stream against a range of
+  output buffer sizes down to 0.
 
 ### Fixed
 
 - `format_map_flags`'s final fallback `snprintf` call was missing
-  the `oi < out_size` guard every other decoder in the file has —
-  found by the new property tests on their very first run. A long
-  enough combination of `mmap` flags into a small enough output
-  buffer could make `oi` exceed `out_size` (a normal, expected
-  outcome of `snprintf`'s C99 return-value semantics: it reports how
-  much it *would* have written, not how much fit), and the missing
-  guard let `out_size - oi` underflow as an unsigned subtraction,
-  turning into a heap-buffer-overflow.
+  the `oi < out_size` guard present in every other decoder in the
+  file. `snprintf`'s C99 return value is how many bytes it would
+  have written, not how many fit; without the guard, a long enough
+  flag combination into a small enough buffer pushed `oi` past
+  `out_size`, and `out_size - oi` (both `size_t`) underflowed into a
+  heap-buffer-overflow. Found by the new property tests on their
+  first run.
 
 ## [1.0.0] - 2026-09-01
 
-### Added — core tracing
+### Added: core tracing
 
 - `ptrace(2)`-based syscall tracer for x86-64 and ARM64 (aarch64)
-  Linux: traces a launched program (or `-p PID` to attach to one
-  already running) and prints every syscall's name, arguments, and
-  return value, with failed calls showing the errno name
-  (`ENOENT`, not `2`).
+  Linux. Traces a launched program, or attaches to one already
+  running with `-p PID`. Prints every syscall's name, arguments, and
+  return value; failed calls show the errno name (`ENOENT`, not
+  `2`).
 - `-f` follows `fork()`/`vfork()`/`clone()` into child processes
-  instead of only ever watching the one process that was launched;
-  output lines get a `[pid N] ` prefix.
-- Signals delivered to a traced process (crashes, external kills,
-  ...) get their own `--- SIGNAME (description) ---` line before
-  being forwarded on, same as real `strace`.
-- `-e trace=SET` filters which syscalls get printed — a
+  instead of only the process that was launched. Output lines get a
+  `[pid N] ` prefix.
+- Signals delivered to a traced process (crashes, external kills)
+  get a `--- SIGNAME (description) ---` line before being forwarded,
+  matching real `strace`.
+- `-e trace=SET` filters which syscalls are printed: a
   comma-separated mix of categories (`file`, `network`, `process`)
   and/or exact syscall names.
 - `-T` times each syscall (wall clock, entry-stop to exit-stop) and
   appends it as `<seconds.microseconds>`.
-- `-c` replaces per-call output with a summary table — calls,
-  errors, and total time grouped by syscall name, sorted
-  slowest-first.
+- `-c` replaces per-call output with a summary table: calls, errors,
+  and total time grouped by syscall name, sorted slowest-first.
 - `-o FILE` sends the trace to a file instead of stdout/stderr,
   without touching the traced program's own stdin/stdout/stderr.
-- `-s SIZE` caps how many raw bytes of a string/buffer argument get
+- `-s SIZE` caps how many raw bytes of a string/buffer argument are
   read and shown before truncating with `...` (default 200).
-- `-y` resolves file descriptor arguments to whatever they point to
-  via `/proc/pid/fd/N`, e.g. `read(3</etc/passwd>, ...)`.
+- `-y` resolves file descriptor arguments to what they point to, via
+  `/proc/pid/fd/N`, e.g. `read(3</etc/passwd>, ...)`.
 
-### Added — argument decoding
+### Added: argument decoding
 
-Instead of a bare pointer or a raw number, these now show something
-readable:
+Decoded instead of printed as a bare pointer or raw number:
 
-- `open`/`stat`/`execve`/`symlink`/`link`/`mount` and friends: path
-  arguments as actual strings.
+- `open`/`stat`/`execve`/`symlink`/`link`/`mount` and similar: path
+  arguments as strings.
 - `execve`/`execveat`: `argv`/`envp` arrays, decoded element by
   element.
-- `read`/`write`: the bytes being moved.
+- `read`/`write`: the bytes moved.
 - `connect`/`bind`/`sendto`/`recvfrom`/`accept`/`getsockname`/
-  `getpeername`: the socket address (`AF_INET`, `AF_INET6`, and
-  `AF_UNIX`, including abstract-socket `@` paths) instead of a raw
-  pointer — `recvfrom` shows both the received data *and* the
-  sender's address in the same line.
+  `getpeername`: the socket address (`AF_INET`, `AF_INET6`,
+  `AF_UNIX`, including abstract-socket `@` paths). `recvfrom` shows
+  both the received data and the sender's address in the same line.
 - `socket`/`socketpair`: domain and type (`AF_INET`,
   `SOCK_STREAM|SOCK_CLOEXEC`, ...).
 - `open`/`openat`: flags (`O_WRONLY|O_CREAT|O_TRUNC` instead of a
@@ -89,8 +83,8 @@ readable:
   `MAP_PRIVATE|MAP_ANONYMOUS`).
 - `wait4`: exit status, decoded into the `WIFEXITED`/`WIFSIGNALED`/
   `WIFSTOPPED` form real `strace` uses.
-- `kill`/`tkill`/`tgkill`: target signal by name (`SIGTERM`), with
-  the "null signal" `0` kept as plain `0`.
+- `kill`/`tkill`/`tgkill`: target signal by name (`SIGTERM`); the
+  null signal `0` prints as plain `0`.
 - `lseek`: `whence` (`SEEK_SET`/`SEEK_CUR`/`SEEK_END`).
 - `fcntl`: `cmd` (`F_GETFD`, `F_SETFL`, `F_DUPFD_CLOEXEC`, ...).
 - `rt_sigprocmask`: `how` (`SIG_BLOCK`/`SIG_UNBLOCK`/`SIG_SETMASK`).
@@ -98,9 +92,9 @@ readable:
 - `clock_gettime`/`clock_settime`/`clock_getres`/`clock_nanosleep`:
   `clockid` (`CLOCK_REALTIME`, `CLOCK_MONOTONIC`, ...).
 
-### Added — testing & tooling
+### Added: testing & tooling
 
-- `tests/run_tests.sh`: a regression suite exercising every flag and
+- `tests/run_tests.sh`: regression suite exercising every flag and
   decoder above against real programs and real syscalls.
 - GitHub Actions CI (`.github/workflows/ci.yml`) running the suite
   on every push/PR to `main`.
@@ -109,10 +103,10 @@ readable:
 
 ### Changed
 
-- Split the single ~2000-line `src/mini_strace.c` into modules —
+- Split the single ~2000-line `src/mini_strace.c` into modules:
   `arch.h` (register access), `arg_routing.{c,h}` (which argument
   holds what), `child_mem.{c,h}` (reading the tracee's memory),
   `decoders.{c,h}` (formatting raw values), and `mini_strace.c`
-  itself (the tracer loop, per-tracee state, and `main()`) — with no
-  behavior change, verified by the full test suite passing
-  identically before and after.
+  itself (tracer loop, per-tracee state, `main()`). No behavior
+  change; verified by the test suite passing identically before and
+  after.
