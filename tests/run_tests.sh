@@ -350,6 +350,64 @@ out=$($STRACE /tmp/mini_strace_test_clock 2>&1)
 check_contains "CLOCK_REALTIME decoded" 'clock_gettime\(CLOCK_REALTIME' "$out"
 check_contains "CLOCK_MONOTONIC decoded" 'clock_gettime\(CLOCK_MONOTONIC' "$out"
 
+echo "=== clone/clone3 flags decoding ==="
+out=$($STRACE python3 -c '
+import threading
+t = threading.Thread(target=lambda: None)
+t.start()
+t.join()
+' 2>&1)
+check_contains "CLONE_THREAD decoded (pthread_create via clone or clone3)" \
+    'clone3?\(.*CLONE_THREAD' "$out"
+
+out=$($STRACE -f /bin/sh -c '/bin/true' 2>&1)
+check_contains "exit signal SIGCHLD decoded on a plain fork-like clone" \
+    'clone\(.*\|SIGCHLD' "$out"
+
+cat >/tmp/mini_strace_test_clone3.c <<'EOF'
+#define _GNU_SOURCE
+#include <linux/sched.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <string.h>
+
+struct clone_args_min {
+    __u64 flags;
+    __u64 pidfd;
+    __u64 child_tid;
+    __u64 parent_tid;
+    __u64 exit_signal;
+    __u64 stack;
+    __u64 stack_size;
+    __u64 tls;
+};
+
+int main(void) {
+    struct clone_args_min args;
+    memset(&args, 0, sizeof(args));
+    args.flags = CLONE_VM | CLONE_VFORK;
+    args.exit_signal = SIGCHLD;
+    static char stack[65536];
+    args.stack = (unsigned long)stack;
+    args.stack_size = sizeof(stack);
+
+    long ret = syscall(SYS_clone3, &args, sizeof(args));
+    if (ret == 0)
+        _exit(0);
+    int status;
+    waitpid(ret, &status, 0);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_clone3 /tmp/mini_strace_test_clone3.c
+out=$($STRACE /tmp/mini_strace_test_clone3 2>&1)
+check_contains "clone3's flags field decoded (struct clone_args)" \
+    'clone3\(CLONE_VM\|CLONE_VFORK' "$out"
+check_contains "clone3's separate exit_signal field decoded" \
+    'clone3\(.*\|SIGCHLD' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

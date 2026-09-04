@@ -66,4 +66,12 @@ void format_access_mode(unsigned long long value, char *out, size_t out_size);
  * clockid argument. */
 void format_clockid(unsigned long long value, char *out, size_t out_size);
 
+/* clone's flags argument. The low byte (CSIGNAL) is the exit signal
+ * sent to the parent, not a flag bit, and is decoded separately. */
+void format_clone_flags(unsigned long long value, char *out, size_t out_size);
+
+/* clone3's single argument: a pointer to struct clone_args. Reads
+ * the tracee's memory to get the flags and exit_signal fields. */
+void format_clone3_flags(pid_t pid, unsigned long long addr, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

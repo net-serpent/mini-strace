@@ -15,6 +15,12 @@ on release.
 
 ### Added
 
+- `clone`/`clone3`: flags (`CLONE_VM|CLONE_FS|CLONE_FILES|...`), with
+  the exit signal decoded and shown separately (`|SIGCHLD`) instead
+  of left packed into flags' unlabeled low byte. `clone3`'s
+  `struct clone_args` is read from the tracee's memory; both
+  syscalls share one formatting path, so `clone` and `clone3` calls
+  performing the same operation decode identically.
 - `tests/property_test_decoders.c`: property tests for the pure
   `format_*` decoders in `decoders.c` (no `ptrace` dependency).
   Built with `-fsanitize=address,undefined`, run via

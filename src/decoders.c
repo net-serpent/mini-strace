@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <sched.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -511,4 +512,136 @@ void format_clockid(unsigned long long value, char *out, size_t out_size) {
         }
     }
     snprintf(out, out_size, "0x%llx", value);
+}
+
+/* clone()/clone3()'s flags. Real macros from <sched.h>, same
+ * reasoning as everywhere else in this file: numbers are fixed by
+ * the kernel ABI and the libc header already has them right for
+ * this platform. CLONE_PIDFD and CLONE_CLEAR_SIGHAND are newer
+ * additions to the kernel/glibc pair and are guarded, since a build
+ * against an older libc may not define them.
+ *
+ * The low byte of clone()'s flags argument is not a flag at all: it
+ * is the signal number to send the parent on exit (CSIGNAL, 0xff),
+ * a historical encoding predating clone3()'s separate exit_signal
+ * field. format_clone_flags_value() below splits that byte out and
+ * decodes it with sigabbrev_np(), the same function used elsewhere
+ * to name a signal being delivered to the tracee. */
+static const flag_entry clone_flag_table[] = {
+    { CLONE_VM,             "CLONE_VM" },
+    { CLONE_FS,             "CLONE_FS" },
+    { CLONE_FILES,          "CLONE_FILES" },
+    { CLONE_SIGHAND,        "CLONE_SIGHAND" },
+#ifdef CLONE_PIDFD
+    { CLONE_PIDFD,          "CLONE_PIDFD" },
+#endif
+    { CLONE_PTRACE,         "CLONE_PTRACE" },
+    { CLONE_VFORK,          "CLONE_VFORK" },
+    { CLONE_PARENT,         "CLONE_PARENT" },
+    { CLONE_THREAD,         "CLONE_THREAD" },
+    { CLONE_NEWNS,          "CLONE_NEWNS" },
+    { CLONE_SYSVSEM,        "CLONE_SYSVSEM" },
+    { CLONE_SETTLS,         "CLONE_SETTLS" },
+    { CLONE_PARENT_SETTID,  "CLONE_PARENT_SETTID" },
+    { CLONE_CHILD_CLEARTID, "CLONE_CHILD_CLEARTID" },
+    { CLONE_UNTRACED,       "CLONE_UNTRACED" },
+    { CLONE_CHILD_SETTID,   "CLONE_CHILD_SETTID" },
+    { CLONE_NEWCGROUP,      "CLONE_NEWCGROUP" },
+    { CLONE_NEWUTS,         "CLONE_NEWUTS" },
+    { CLONE_NEWIPC,         "CLONE_NEWIPC" },
+    { CLONE_NEWUSER,        "CLONE_NEWUSER" },
+    { CLONE_NEWPID,         "CLONE_NEWPID" },
+    { CLONE_NEWNET,         "CLONE_NEWNET" },
+    { CLONE_IO,             "CLONE_IO" },
+#ifdef CLONE_CLEAR_SIGHAND
+    { CLONE_CLEAR_SIGHAND,  "CLONE_CLEAR_SIGHAND" },
+#endif
+    { 0,                    NULL },
+};
+
+/* Low byte of clone()'s flags argument: the exit signal sent to the
+ * parent, encoded there instead of as its own argument (that is
+ * clone3()'s exit_signal field, a separate struct member). Not a
+ * kernel macro name available from a header; the value is fixed by
+ * the ABI. */
+#define CLONE_CSIGNAL_MASK 0xffULL
+
+/* Shared by format_clone_flags() (clone()'s flags argument, flags
+ * and exit signal packed into one value) and format_clone3_flags()
+ * (clone3()'s struct clone_args, which keeps them as separate
+ * fields). exit_signal of 0 means none and is not printed. */
+static void format_clone_flags_value(unsigned long long flags, unsigned long long exit_signal,
+                                      char *out, size_t out_size) {
+    unsigned long long remaining = flags;
+    size_t oi = 0;
+
+    for (int i = 0; clone_flag_table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & clone_flag_table[i].value) == clone_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", clone_flag_table[i].name);
+            remaining &= ~clone_flag_table[i].value;
+        }
+    }
+
+    if (exit_signal != 0 && oi < out_size) {
+        const char *abbrev = sigabbrev_np((int)exit_signal);
+        if (abbrev != NULL)
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%sSIG%s", oi ? "|" : "", abbrev);
+        else
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%llu", oi ? "|" : "", exit_signal);
+    }
+
+    if (oi == 0) {
+        snprintf(out, out_size, "0");
+        return;
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "|0x%llx", remaining);
+}
+
+void format_clone_flags(unsigned long long value, char *out, size_t out_size) {
+    format_clone_flags_value(value & ~CLONE_CSIGNAL_MASK, value & CLONE_CSIGNAL_MASK, out, out_size);
+}
+
+/* clone3()'s single argument is a pointer to struct clone_args, not
+ * a plain integer, so this reads the tracee's memory instead of
+ * just formatting a value already in hand. struct clone_args (Linux
+ * uapi <linux/sched.h>) has a fixed field layout regardless of the
+ * size argument, which only tells the kernel how many trailing
+ * fields are present:
+ *
+ *   u64 flags;        offset 0
+ *   u64 pidfd;        offset 8
+ *   u64 child_tid;    offset 16
+ *   u64 parent_tid;   offset 24
+ *   u64 exit_signal;  offset 32
+ *   ...
+ *
+ * Only flags and exit_signal are read here. Fields are read as
+ * plain host-endian integers (unlike sockaddr's network-order
+ * fields in format_sockaddr): ptrace(2) only ever traces a process
+ * on the same machine, so the tracee's native integers are already
+ * in the tracer's own byte order. */
+#define CLONE_ARGS_MIN_SIZE 40
+
+void format_clone3_flags(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    unsigned char raw[CLONE_ARGS_MIN_SIZE];
+    size_t got = read_child_raw(pid, addr, raw, sizeof(raw));
+    if (got < 8) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    unsigned long long flags = 0;
+    memcpy(&flags, raw, 8);
+
+    unsigned long long exit_signal = 0;
+    if (got >= CLONE_ARGS_MIN_SIZE)
+        memcpy(&exit_signal, raw + 32, 8);
+
+    format_clone_flags_value(flags, exit_signal, out, out_size);
 }

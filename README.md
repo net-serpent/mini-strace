@@ -39,6 +39,9 @@ bare pointer or a raw number:
 - `access`/`faccessat`/`faccessat2`: `mode` (`R_OK|W_OK`, `F_OK`)
 - `clock_gettime`/`clock_settime`/`clock_getres`/`clock_nanosleep`:
   `clockid` (`CLOCK_REALTIME`/`CLOCK_MONOTONIC`, ...)
+- `clone`/`clone3`: flags (`CLONE_VM|CLONE_FS|CLONE_FILES|...`), with
+  the exit signal shown alongside them (`|SIGCHLD`) instead of
+  packed into an unlabeled low byte
 
 Narrow the trace with `-e trace=SET`, a comma-separated mix of
 categories (`file`, `network`, `process`) and/or exact syscall

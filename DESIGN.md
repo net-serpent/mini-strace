@@ -233,6 +233,48 @@ kernel's clock data directly, skipping the syscall and context
 switch. Slower clocks such as `CLOCK_PROCESS_CPUTIME_ID`, or
 anything invoked via `syscall()` directly, still show up normally.
 
+## clone/clone3 flags
+
+`clone` and `clone3` use two different calling conventions for the
+same flags. `clone`'s flags are a plain integer, arg 0 of the raw
+syscall on both x86-64 and aarch64 (a few older architectures
+reorder clone's raw syscall arguments; neither of this project's two
+supported architectures does). `clone3`'s single argument is a
+pointer to `struct clone_args`, so decoding it requires reading the
+tracee's memory rather than just formatting a value already in
+hand, the same shape as `format_sockaddr`.
+
+Both paths funnel into one shared function,
+`format_clone_flags_value()`, that takes `flags` and `exit_signal`
+as separate parameters and produces one output format for both
+syscalls. `format_clone_flags()` (`clone`) splits its single integer
+argument into the two: the low byte (`CSIGNAL`, `0xff`) is not a
+flag bit, it is the signal sent to the parent on exit, encoded there
+because `clone`'s interface predates `clone3`'s separate
+`exit_signal` field. A `CLONE_THREAD` call has no exit signal
+(`exit_signal == 0`, printed as nothing); a plain fork-like call
+typically has `exit_signal == SIGCHLD`, decoded via `sigabbrev_np()`
+the same way `kill`'s target signal is.
+
+`format_clone3_flags()` reads `struct clone_args` (Linux uapi
+`<linux/sched.h>`) directly: `flags` at offset 0, `exit_signal` at
+offset 32, both 8-byte fields regardless of the `size` argument
+(which only tells the kernel how many trailing fields are present).
+Read via `read_child_raw()`, the same primitive `format_sockaddr`
+uses; unlike `sockaddr_in`'s network-order port field, `clone_args`
+fields are plain host-endian integers, since `ptrace(2)` only ever
+traces a process on the same machine and byte order.
+
+Verified against a real `pthread_create()` (Python's `threading`
+module): modern glibc tries `clone3` first, and this container's
+seccomp profile rejects it with `ENOSYS`, so both the `clone3`
+attempt and the `clone` fallback show up in the same trace with
+identical decoded flags, confirming both code paths agree. A plain
+`fork()`-driven `clone` call was checked for the `SIGCHLD` exit
+signal, and a hand-built `clone3` call (`syscall(SYS_clone3, ...)`
+with an explicit `struct clone_args`) was checked for `exit_signal`
+specifically, since the thread case leaves it at 0.
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real

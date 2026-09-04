@@ -72,6 +72,12 @@ unsigned char clockid_arg_mask(const char *syscall);
 /* wait4's wstatus (deferred to the exit-stop — see mini_strace.c). */
 unsigned char wait_status_arg_mask(const char *syscall);
 
+/* clone's flags. */
+unsigned char clone_flags_arg_mask(const char *syscall);
+
+/* clone3's struct clone_args pointer. */
+unsigned char clone3_args_arg_mask(const char *syscall);
+
 /* write's buffer + length — already populated at the entry-stop. */
 const buffer_arg_entry *buffer_arg_lookup(const char *syscall);
 

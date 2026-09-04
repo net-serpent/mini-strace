@@ -410,6 +410,44 @@ unsigned char wait_status_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds clone()'s flags, decoded via
+ * format_clone_flags() in decoders.c. Both x86-64 and aarch64 use
+ * the same raw syscall argument order for clone (flags, stack,
+ * parent_tid, child_tid, tls); a few older architectures reorder
+ * these but neither of this project's two supported architectures
+ * does. */
+static const string_arg_entry clone_flags_arg_table[] = {
+    { "clone",  0x01 },  /* arg 0 */
+    { NULL,     0x00 },
+};
+
+unsigned char clone_flags_arg_mask(const char *syscall) {
+    for (int i = 0; clone_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(clone_flags_arg_table[i].name, syscall) == 0)
+            return clone_flags_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds clone3()'s struct clone_args pointer,
+ * decoded via format_clone3_flags() in decoders.c. Unlike
+ * clone_flags_arg_table this is a pointer, not a plain value, but
+ * it is populated by the caller before the syscall runs, so it can
+ * be dereferenced at the entry-stop like the sockaddr arguments in
+ * sockaddr_arg_table, not deferred to the exit-stop. */
+static const string_arg_entry clone3_args_arg_table[] = {
+    { "clone3",  0x01 },  /* arg 0 */
+    { NULL,      0x00 },
+};
+
+unsigned char clone3_args_arg_mask(const char *syscall) {
+    for (int i = 0; clone3_args_arg_table[i].name != NULL; i++) {
+        if (strcmp(clone3_args_arg_table[i].name, syscall) == 0)
+            return clone3_args_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Syscalls whose output is a raw byte buffer that's only populated
  * *after* the syscall actually runs — read()'s buf is garbage/empty
  * at the entry-stop, so unlike write() this can't be dereferenced
