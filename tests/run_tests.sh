@@ -360,7 +360,21 @@ t.join()
 check_contains "CLONE_THREAD decoded (pthread_create via clone or clone3)" \
     'clone3?\(.*CLONE_THREAD' "$out"
 
-out=$($STRACE -f /bin/sh -c '/bin/true' 2>&1)
+cat >/tmp/mini_strace_test_fork.c <<'EOF'
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main(void) {
+    pid_t pid = fork();
+    if (pid == 0)
+        _exit(0);
+    int status;
+    waitpid(pid, &status, 0);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_fork /tmp/mini_strace_test_fork.c
+out=$($STRACE -f /tmp/mini_strace_test_fork 2>&1)
 check_contains "exit signal SIGCHLD decoded on a plain fork-like clone" \
     'clone\(.*\|SIGCHLD' "$out"
 
