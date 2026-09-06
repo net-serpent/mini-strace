@@ -78,6 +78,9 @@ unsigned char clone_flags_arg_mask(const char *syscall);
 /* clone3's struct clone_args pointer. */
 unsigned char clone3_args_arg_mask(const char *syscall);
 
+/* ioctl's request code. */
+unsigned char ioctl_request_arg_mask(const char *syscall);
+
 /* write's buffer + length — already populated at the entry-stop. */
 const buffer_arg_entry *buffer_arg_lookup(const char *syscall);
 

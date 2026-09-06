@@ -15,6 +15,13 @@ on release.
 
 ### Added
 
+- `ioctl`: the request code decoded by name for the terminal (tty)
+  ioctls (`TIOCGWINSZ`, `FIONREAD`, ...), which cover most
+  real-world traces; any other request falls back to decoding its
+  direction/type/number/size bit layout (`_IOC(_IOC_READ, 0x89,
+  0x27, 32)`) instead of a bare hex number. The request-specific
+  third argument is left as-is, its layout depends on which request
+  it is.
 - `clone`/`clone3`: flags (`CLONE_VM|CLONE_FS|CLONE_FILES|...`), with
   the exit signal decoded and shown separately (`|SIGCHLD`) instead
   of left packed into flags' unlabeled low byte. `clone3`'s

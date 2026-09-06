@@ -42,6 +42,10 @@ bare pointer or a raw number:
 - `clone`/`clone3`: flags (`CLONE_VM|CLONE_FS|CLONE_FILES|...`), with
   the exit signal shown alongside them (`|SIGCHLD`) instead of
   packed into an unlabeled low byte
+- `ioctl`: the request code (`TIOCGWINSZ`, `FIONREAD`, ...) instead
+  of a raw number; an unrecognized request decodes its
+  direction/type/number/size bit layout (`_IOC(_IOC_READ, 0x89,
+  0x27, 32)`) instead of showing only hex
 
 Narrow the trace with `-e trace=SET`, a comma-separated mix of
 categories (`file`, `network`, `process`) and/or exact syscall

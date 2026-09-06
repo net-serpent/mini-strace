@@ -139,6 +139,7 @@ int main(void) {
         { "format_sigprocmask_how",          format_sigprocmask_how },
         { "format_access_mode",              format_access_mode },
         { "format_clockid",                  format_clockid },
+        { "format_ioctl_request",            format_ioctl_request },
         { "format_hex_or_fd_arg(is_fd_arg=0)", wrap_hex_or_fd_arg },
     };
     size_t num_decoders = sizeof(decoders) / sizeof(decoders[0]);

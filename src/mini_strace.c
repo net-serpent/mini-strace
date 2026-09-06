@@ -427,6 +427,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char clockid_mask = clockid_arg_mask(name);
                     unsigned char clone_flags_mask = clone_flags_arg_mask(name);
                     unsigned char clone3_args_mask = clone3_args_arg_mask(name);
+                    unsigned char ioctl_request_mask = ioctl_request_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -463,6 +464,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_clone_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (clone3_args_mask & (1 << i))
                             format_clone3_flags(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (ioctl_request_mask & (1 << i))
+                            format_ioctl_request(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));

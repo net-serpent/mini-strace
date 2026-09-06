@@ -422,6 +422,32 @@ check_contains "clone3's flags field decoded (struct clone_args)" \
 check_contains "clone3's separate exit_signal field decoded" \
     'clone3\(.*\|SIGCHLD' "$out"
 
+echo "=== ioctl request decoding ==="
+cat >/tmp/mini_strace_test_ioctl.c <<'EOF'
+#include <sys/ioctl.h>
+#include <unistd.h>
+
+#define IOCTL_TEST_UNKNOWN _IOR('z', 1, int)
+
+int main(void) {
+    int fds[2];
+    if (pipe(fds) != 0)
+        return 1;
+    int n;
+    ioctl(fds[0], FIONREAD, &n);
+    ioctl(fds[0], IOCTL_TEST_UNKNOWN, &n);
+    close(fds[0]);
+    close(fds[1]);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_ioctl /tmp/mini_strace_test_ioctl.c
+out=$($STRACE /tmp/mini_strace_test_ioctl 2>&1)
+check_contains "known ioctl request decoded by name (FIONREAD)" \
+    'ioctl\(.*, FIONREAD,' "$out"
+check_contains "unknown ioctl request decoded via its dir/type/nr/size bits" \
+    'ioctl\(.*, _IOC\(_IOC_READ, 0x7a, 0x1, 4\),' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

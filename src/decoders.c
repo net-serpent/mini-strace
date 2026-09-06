@@ -12,6 +12,8 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <sched.h>
+#include <sys/ioctl.h>
+#include <linux/ioctl.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -644,4 +646,85 @@ void format_clone3_flags(pid_t pid, unsigned long long addr, char *out, size_t o
         memcpy(&exit_signal, raw + 32, 8);
 
     format_clone_flags_value(flags, exit_signal, out, out_size);
+}
+
+/* ioctl()'s request argument. Unlike the lookups above, this isn't
+ * a small fixed enum — Linux has thousands of request codes spread
+ * across every driver and subsystem, encoded via <linux/ioctl.h>'s
+ * bit layout (direction, type, number, size packed into one 32-bit
+ * value) rather than assigned arbitrary numbers. This table covers
+ * the terminal (tty) ioctls, which dominate real-world traces (any
+ * program checking whether stdin/stdout is a terminal, getting its
+ * size, or fiddling with line discipline hits these); an unlisted
+ * request falls back to decoding that bit layout directly instead
+ * of a bare hex number, the same fallback real strace uses. */
+static const flag_entry ioctl_request_table[] = {
+    { TCGETS,       "TCGETS" },
+    { TCSETS,       "TCSETS" },
+    { TCSETSW,      "TCSETSW" },
+    { TCSETSF,      "TCSETSF" },
+    { TCGETA,       "TCGETA" },
+    { TCSETA,       "TCSETA" },
+    { TCSETAW,      "TCSETAW" },
+    { TCSETAF,      "TCSETAF" },
+    { TCSBRK,       "TCSBRK" },
+    { TCXONC,       "TCXONC" },
+    { TCFLSH,       "TCFLSH" },
+    { TIOCEXCL,     "TIOCEXCL" },
+    { TIOCNXCL,     "TIOCNXCL" },
+    { TIOCSCTTY,    "TIOCSCTTY" },
+    { TIOCGPGRP,    "TIOCGPGRP" },
+    { TIOCSPGRP,    "TIOCSPGRP" },
+    { TIOCOUTQ,     "TIOCOUTQ" },
+    { TIOCSTI,      "TIOCSTI" },
+    { TIOCGWINSZ,   "TIOCGWINSZ" },
+    { TIOCSWINSZ,   "TIOCSWINSZ" },
+    { TIOCMGET,     "TIOCMGET" },
+    { TIOCMBIS,     "TIOCMBIS" },
+    { TIOCMBIC,     "TIOCMBIC" },
+    { TIOCMSET,     "TIOCMSET" },
+    { TIOCGSOFTCAR, "TIOCGSOFTCAR" },
+    { TIOCSSOFTCAR, "TIOCSSOFTCAR" },
+    { FIONREAD,     "FIONREAD" },
+    { TIOCLINUX,    "TIOCLINUX" },
+    { TIOCCONS,     "TIOCCONS" },
+    { TIOCGSERIAL,  "TIOCGSERIAL" },
+    { TIOCSSERIAL,  "TIOCSSERIAL" },
+    { TIOCPKT,      "TIOCPKT" },
+    { FIONBIO,      "FIONBIO" },
+    { TIOCNOTTY,    "TIOCNOTTY" },
+    { TIOCSETD,     "TIOCSETD" },
+    { TIOCGETD,     "TIOCGETD" },
+    { TIOCGSID,     "TIOCGSID" },
+    { TIOCGPTN,     "TIOCGPTN" },
+    { TIOCSPTLCK,   "TIOCSPTLCK" },
+#ifdef TIOCGPTPEER
+    { TIOCGPTPEER,  "TIOCGPTPEER" },
+#endif
+    { FIONCLEX,     "FIONCLEX" },
+    { FIOCLEX,      "FIOCLEX" },
+    { FIOASYNC,     "FIOASYNC" },
+    { 0,            NULL },
+};
+
+void format_ioctl_request(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; ioctl_request_table[i].name != NULL; i++) {
+        if (ioctl_request_table[i].value == value) {
+            snprintf(out, out_size, "%s", ioctl_request_table[i].name);
+            return;
+        }
+    }
+
+    unsigned int req = (unsigned int)value;
+    unsigned int dir = _IOC_DIR(req);
+    const char *dir_name;
+    switch (dir) {
+        case _IOC_NONE:            dir_name = "_IOC_NONE"; break;
+        case _IOC_READ:            dir_name = "_IOC_READ"; break;
+        case _IOC_WRITE:           dir_name = "_IOC_WRITE"; break;
+        case _IOC_READ|_IOC_WRITE: dir_name = "_IOC_READ|_IOC_WRITE"; break;
+        default:                   dir_name = "0"; break;
+    }
+    snprintf(out, out_size, "_IOC(%s, 0x%x, 0x%x, %u)",
+             dir_name, _IOC_TYPE(req), _IOC_NR(req), _IOC_SIZE(req));
 }

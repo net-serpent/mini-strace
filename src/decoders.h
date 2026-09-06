@@ -74,4 +74,10 @@ void format_clone_flags(unsigned long long value, char *out, size_t out_size);
  * the tracee's memory to get the flags and exit_signal fields. */
 void format_clone3_flags(pid_t pid, unsigned long long addr, char *out, size_t out_size);
 
+/* ioctl's request argument. Known terminal (tty) ioctls decode by
+ * name; anything else falls back to decoding the request's
+ * direction/type/number/size bit layout instead of a bare hex
+ * number. */
+void format_ioctl_request(unsigned long long value, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

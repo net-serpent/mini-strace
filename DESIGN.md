@@ -275,6 +275,43 @@ signal, and a hand-built `clone3` call (`syscall(SYS_clone3, ...)`
 with an explicit `struct clone_args`) was checked for `exit_signal`
 specifically, since the thread case leaves it at 0.
 
+## ioctl request codes
+
+`ioctl`'s request argument isn't a small enum like `fcntl`'s cmd or
+`lseek`'s whence — Linux has thousands of request codes, one set per
+driver and subsystem, assigned via a shared bit layout rather than a
+flat list: `<linux/ioctl.h>` packs a direction (none/read/write),
+type (a per-subsystem character), number, and payload size into one
+32-bit value, and each subsystem's headers just call the `_IO`/
+`_IOR`/`_IOW`/`_IOWR` macros to build their own constants from it.
+
+Decoding every request would mean a lookup table with thousands of
+entries and, for most of them, a struct layout to decode the third
+argument, which is far more scope than this project covers.
+Instead, `format_ioctl_request()` (`decoders.c`) does what real
+`strace` does for a request it doesn't specifically know: a small
+table of terminal (tty) ioctls, decoded by name, covers what
+dominates real-world traces (any program checking whether its
+stdin/stdout is a terminal, reading window size, allocating a pty).
+Anything else falls back to decoding the bit layout itself via
+`_IOC_DIR`/`_IOC_TYPE`/`_IOC_NR`/`_IOC_SIZE`, e.g.
+`_IOC(_IOC_READ, 0x89, 0x27, 32)`, rather than a bare hex number —
+still useful (the direction and payload size are visible even for
+an unrecognized request) without needing to know what that request
+does.
+
+The third argument (the request's own data, usually a struct
+pointer) is left as plain hex/fd, matching every request this
+project doesn't otherwise decode; its layout depends entirely on
+which request this is, and only the request table above is in
+scope here.
+
+Verified against `FIONREAD` on a pipe (a known request, argument 0,
+decodes by name), a hand-built unknown request via `_IOR('z', 1,
+int)` (falls back to the bit-layout decoding, `_IOC(_IOC_READ,
+0x7a, 0x1, 4)`), and `TIOCGWINSZ`/`TIOCGPTN`/`TIOCSPTLCK` against a
+real pty allocated with `posix_openpt()`.
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real

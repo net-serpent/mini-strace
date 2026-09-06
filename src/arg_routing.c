@@ -448,6 +448,25 @@ unsigned char clone3_args_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds ioctl()'s request code, decoded via
+ * format_ioctl_request() in decoders.c. ioctl's third argument
+ * (the request-specific data, a struct pointer for most requests
+ * covered by that table) is left as plain hex/fd — decoding it
+ * would mean a separate struct layout per request, which is well
+ * beyond what the request-code table above covers. */
+static const string_arg_entry ioctl_request_arg_table[] = {
+    { "ioctl",  0x02 },  /* arg 1 */
+    { NULL,     0x00 },
+};
+
+unsigned char ioctl_request_arg_mask(const char *syscall) {
+    for (int i = 0; ioctl_request_arg_table[i].name != NULL; i++) {
+        if (strcmp(ioctl_request_arg_table[i].name, syscall) == 0)
+            return ioctl_request_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Syscalls whose output is a raw byte buffer that's only populated
  * *after* the syscall actually runs — read()'s buf is garbage/empty
  * at the entry-stop, so unlike write() this can't be dereferenced
