@@ -312,6 +312,85 @@ int)` (falls back to the bit-layout decoding, `_IOC(_IOC_READ,
 0x7a, 0x1, 4)`), and `TIOCGWINSZ`/`TIOCGPTN`/`TIOCSPTLCK` against a
 real pty allocated with `posix_openpt()`.
 
+## sendmsg/recvmsg struct msghdr
+
+`sendmsg`/`recvmsg`'s single meaningful argument is a pointer to
+`struct msghdr`:
+
+```c
+struct msghdr {
+    void         *msg_name;        /* destination/sender address */
+    socklen_t     msg_namelen;
+    struct iovec *msg_iov;         /* scatter/gather data array */
+    size_t        msg_iovlen;
+    void         *msg_control;     /* ancillary data (cmsg) */
+    size_t        msg_controllen;
+    int           msg_flags;
+};
+```
+
+Both syscalls share one formatter, `format_msghdr()`, called from
+two different points depending on when each field is actually
+populated. `sendmsg`'s `msghdr` is entirely the caller's own data,
+already valid before the syscall runs, so it's dereferenced at the
+entry-stop, the same category as `connect`/`bind`/`sendto`'s
+sockaddr. `recvmsg`'s is only meaningful *after* the call returns —
+the kernel fills in the sender's address, the received bytes,
+ancillary data, and `msg_flags` — so it's deferred to the exit-stop
+via a new `pending_msghdr_idx` field on `tracee_state`, the same
+category as `accept`/`getsockname`'s sockaddr and `wait4`'s
+wstatus. Struct `msghdr` itself is read from the tracee's memory in
+one `read_child_raw()` into a local `struct msghdr` rather than
+hand-decoding field offsets the way `format_clone3_flags()` has to
+for `clone_args` (which isn't a standard glibc type): `msghdr` and
+`iovec` are both ordinary types this codebase already includes via
+`<sys/socket.h>`/`<sys/uio.h>`, and ptrace only ever traces a
+process on the same machine and architecture, so the tracee's
+layout is identical to the tracer's own.
+
+`msg_name`/`msg_namelen` reuse `format_sockaddr()` directly — same
+decoding `connect`/`accept`/etc. already get. `msg_iov` is walked
+as an array of up to 8 entries (`MSGHDR_MAX_IOV`, with a trailing
+`...` past that), each read individually via its own
+`read_child_raw()` since the array itself is a separate pointer from
+the struct. For `sendmsg`, each iovec's declared `iov_len` is
+trusted as-is, since that's exactly the data the caller is sending.
+For `recvmsg`, the kernel only reports *total* bytes received across
+every iovec (the syscall's return value), not per-iovec — same as
+`readv` — so `format_msghdr()` takes that return value as a
+`total_bytes` budget and consumes it across the iovecs in the same
+order the kernel itself would have filled them; `iov_len` in the
+output still shows each buffer's declared capacity (matching real
+`strace`), while `iov_base`'s displayed content is capped to
+whatever fraction of the budget that iovec actually got.
+
+`msg_control` (ancillary/cmsg data) is a sequence of `struct
+cmsghdr` entries with kernel-defined alignment between them
+(`CMSG_ALIGN`), not worth reimplementing by hand. Instead, the
+tracee's control buffer (up to 512 bytes, `MSGHDR_MAX_CONTROL`) is
+copied into a local buffer, wrapped in a throwaway `struct msghdr`
+that actually points at *this* process's own memory, and walked
+with the real `CMSG_FIRSTHDR`/`CMSG_NXTHDR`/`CMSG_DATA` macros —
+the same ones real sender/receiver code uses, sidestepping the
+alignment rules entirely. `SOL_SOCKET`/`SCM_RIGHTS` (passed file
+descriptors — the reason cmsg shows up in most real-world traces,
+e.g. systemd/Docker socket activation and D-Bus fd passing) decodes
+into the actual fd numbers; `SCM_CREDENTIALS` decodes into
+pid/uid/gid. Anything else shows its level/type/length without
+guessing at a payload shape this table doesn't know.
+
+Verified with a `socketpair(AF_UNIX, SOCK_DGRAM, ...)` pair passing
+one open fd via `SCM_RIGHTS` alongside a short string: the `sendmsg`
+side shows the outgoing fd number, the iovec's exact text, and
+`SCM_RIGHTS`; the `recvmsg` side shows the newly-assigned received
+fd number, the same text truncated correctly against the return
+value while the receive buffer's full declared size stays in
+`iov_len`, and `SCM_RIGHTS` again on the receiving end. A separate
+`sendmsg` to a real `AF_INET` address with two iovecs confirmed
+`msg_name` decodes through the shared sockaddr formatter and
+multiple iovecs render in order with `msg_control=NULL` when there
+isn't any.
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real

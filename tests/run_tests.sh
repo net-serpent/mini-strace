@@ -448,6 +448,112 @@ check_contains "known ioctl request decoded by name (FIONREAD)" \
 check_contains "unknown ioctl request decoded via its dir/type/nr/size bits" \
     'ioctl\(.*, _IOC\(_IOC_READ, 0x7a, 0x1, 4\),' "$out"
 
+echo "=== sendmsg/recvmsg struct msghdr decoding ==="
+cat >/tmp/mini_strace_test_msghdr_fd.c <<'EOF'
+#define _GNU_SOURCE
+#include <sys/socket.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+int main(void) {
+    int sv[2];
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, sv) != 0)
+        return 1;
+
+    int pass_fd = open("/etc/hostname", O_RDONLY);
+
+    char data[] = "hello";
+    struct iovec iov = { .iov_base = data, .iov_len = sizeof(data) - 1 };
+
+    char cbuf[CMSG_SPACE(sizeof(int))];
+    memset(cbuf, 0, sizeof(cbuf));
+    struct msghdr smsg;
+    memset(&smsg, 0, sizeof(smsg));
+    smsg.msg_iov = &iov;
+    smsg.msg_iovlen = 1;
+    smsg.msg_control = cbuf;
+    smsg.msg_controllen = sizeof(cbuf);
+
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&smsg);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &pass_fd, sizeof(int));
+
+    sendmsg(sv[0], &smsg, 0);
+
+    char rbuf[64];
+    struct iovec riov = { .iov_base = rbuf, .iov_len = sizeof(rbuf) };
+    char rcbuf[CMSG_SPACE(sizeof(int))];
+    struct msghdr rmsg;
+    memset(&rmsg, 0, sizeof(rmsg));
+    rmsg.msg_iov = &riov;
+    rmsg.msg_iovlen = 1;
+    rmsg.msg_control = rcbuf;
+    rmsg.msg_controllen = sizeof(rcbuf);
+
+    recvmsg(sv[1], &rmsg, 0);
+
+    close(sv[0]);
+    close(sv[1]);
+    close(pass_fd);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_msghdr_fd /tmp/mini_strace_test_msghdr_fd.c
+out=$($STRACE /tmp/mini_strace_test_msghdr_fd 2>&1)
+check_contains "sendmsg's msg_iov data decoded" \
+    'sendmsg\(.*iov_base="hello", iov_len=5' "$out"
+check_contains "sendmsg's SCM_RIGHTS ancillary data (fd passing) decoded" \
+    'sendmsg\(.*cmsg_type=SCM_RIGHTS, cmsg_data=\[[0-9]+\]' "$out"
+check_contains "recvmsg's SCM_RIGHTS ancillary data decoded" \
+    'recvmsg\(.*cmsg_type=SCM_RIGHTS, cmsg_data=\[[0-9]+\]' "$out"
+check_contains "recvmsg's iov_base truncated to actual bytes received, iov_len kept as the buffer's declared size" \
+    'recvmsg\(.*iov_base="hello", iov_len=64' "$out"
+
+cat >/tmp/mini_strace_test_msghdr_addr.c <<'EOF'
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+
+int main(void) {
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(9);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+
+    char part1[] = "ab";
+    char part2[] = "cdef";
+    struct iovec iov[2] = {
+        { .iov_base = part1, .iov_len = 2 },
+        { .iov_base = part2, .iov_len = 4 },
+    };
+    struct msghdr msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.msg_name = &addr;
+    msg.msg_namelen = sizeof(addr);
+    msg.msg_iov = iov;
+    msg.msg_iovlen = 2;
+
+    sendmsg(s, &msg, 0);
+    close(s);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_msghdr_addr /tmp/mini_strace_test_msghdr_addr.c
+out=$($STRACE /tmp/mini_strace_test_msghdr_addr 2>&1)
+check_contains "sendmsg's msg_name decoded via the real sockaddr formatter" \
+    'sendmsg\(.*msg_name=\{sa_family=AF_INET, sin_port=htons\(9\), sin_addr=inet_addr\("127\.0\.0\.1"\)\}' "$out"
+check_contains "sendmsg's multiple iovecs decoded in order" \
+    'sendmsg\(.*iov_base="ab", iov_len=2\}, \{iov_base="cdef", iov_len=4\}' "$out"
+check_contains "sendmsg's msg_control shown as NULL when absent" \
+    'sendmsg\(.*msg_control=NULL' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

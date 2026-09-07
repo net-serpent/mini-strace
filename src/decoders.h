@@ -80,4 +80,11 @@ void format_clone3_flags(pid_t pid, unsigned long long addr, char *out, size_t o
  * number. */
 void format_ioctl_request(unsigned long long value, char *out, size_t out_size);
 
+/* sendmsg/recvmsg's struct msghdr argument. total_bytes is -1 for
+ * sendmsg (trust each iovec's declared iov_len) or the syscall's
+ * return value for recvmsg (only that many bytes were actually
+ * received, spread across the iovecs in order). */
+void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
+                    char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

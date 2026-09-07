@@ -46,6 +46,10 @@ bare pointer or a raw number:
   of a raw number; an unrecognized request decodes its
   direction/type/number/size bit layout (`_IOC(_IOC_READ, 0x89,
   0x27, 32)`) instead of showing only hex
+- `sendmsg`/`recvmsg`: the full `struct msghdr` — destination/sender
+  address, each `iovec`'s data, and ancillary data (`SCM_RIGHTS`
+  file descriptor passing, `SCM_CREDENTIALS`) instead of a raw
+  pointer
 
 Narrow the trace with `-e trace=SET`, a comma-separated mix of
 categories (`file`, `network`, `process`) and/or exact syscall

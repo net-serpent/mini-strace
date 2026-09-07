@@ -14,6 +14,8 @@
 #include <sched.h>
 #include <sys/ioctl.h>
 #include <linux/ioctl.h>
+#include <sys/uio.h>
+#include <stdint.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -727,4 +729,214 @@ void format_ioctl_request(unsigned long long value, char *out, size_t out_size) 
     }
     snprintf(out, out_size, "_IOC(%s, 0x%x, 0x%x, %u)",
              dir_name, _IOC_TYPE(req), _IOC_NR(req), _IOC_SIZE(req));
+}
+
+/* sendmsg/recvmsg's msg_flags argument (real, kernel-recognized
+ * MSG_* bits) — a plain OR-of-bits walk like open()'s flags, used
+ * only inside format_msghdr() below. 0 is itself a meaningful value
+ * (no flags), not "nothing matched", so it's printed directly
+ * rather than going through the walk. */
+static const flag_entry msg_flag_table[] = {
+    { MSG_OOB,          "MSG_OOB" },
+    { MSG_PEEK,         "MSG_PEEK" },
+    { MSG_DONTROUTE,    "MSG_DONTROUTE" },
+    { MSG_CTRUNC,       "MSG_CTRUNC" },
+    { MSG_TRUNC,        "MSG_TRUNC" },
+    { MSG_DONTWAIT,     "MSG_DONTWAIT" },
+    { MSG_EOR,          "MSG_EOR" },
+    { MSG_WAITALL,      "MSG_WAITALL" },
+    { MSG_CONFIRM,      "MSG_CONFIRM" },
+    { MSG_ERRQUEUE,     "MSG_ERRQUEUE" },
+    { MSG_NOSIGNAL,     "MSG_NOSIGNAL" },
+    { MSG_MORE,         "MSG_MORE" },
+    { MSG_CMSG_CLOEXEC, "MSG_CMSG_CLOEXEC" },
+    { 0,                NULL },
+};
+
+static void format_msg_flags_value(int flags, char *out, size_t out_size) {
+    if (flags == 0) {
+        snprintf(out, out_size, "0");
+        return;
+    }
+    unsigned long long remaining = (unsigned int)flags;
+    size_t oi = 0;
+    for (int i = 0; msg_flag_table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & msg_flag_table[i].value) == msg_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", msg_flag_table[i].name);
+            remaining &= ~msg_flag_table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+/* sendmsg/recvmsg's ancillary-data (cmsg) list, msg_control /
+ * msg_controllen in struct msghdr. This is a sequence of struct
+ * cmsghdr headers each followed by its own payload, with kernel-
+ * defined alignment/padding between entries (CMSG_ALIGN) that isn't
+ * worth reimplementing by hand — instead the tracee's control
+ * buffer is copied into a local one, wrapped in a throwaway struct
+ * msghdr that actually points at *this* process's memory, and
+ * walked with the real CMSG_FIRSTHDR/CMSG_NXTHDR/CMSG_DATA macros,
+ * the same ones a real sender/receiver would use.
+ *
+ * Only SOL_SOCKET's SCM_RIGHTS (passed file descriptors — the
+ * reason cmsg exists in most real-world traces, e.g. systemd/Docker
+ * socket-activation and D-Bus fd passing) and SCM_CREDENTIALS
+ * (sender pid/uid/gid) are decoded into their actual meaning;
+ * anything else shows its level/type/length without trying to
+ * interpret payload this table doesn't know the shape of. */
+#define MSGHDR_MAX_CONTROL 512
+
+static void format_cmsg(pid_t pid, unsigned long long addr, size_t controllen,
+                         char *out, size_t out_size) {
+    size_t want = controllen < MSGHDR_MAX_CONTROL ? controllen : MSGHDR_MAX_CONTROL;
+    unsigned char cbuf[MSGHDR_MAX_CONTROL];
+    size_t got = read_child_raw(pid, addr, cbuf, want);
+    if (got == 0) {
+        snprintf(out, out_size, "[]");
+        return;
+    }
+
+    struct msghdr local_hdr;
+    memset(&local_hdr, 0, sizeof(local_hdr));
+    local_hdr.msg_control = cbuf;
+    local_hdr.msg_controllen = got;
+
+    size_t oi = (size_t)snprintf(out, out_size, "[");
+    int first = 1;
+    for (struct cmsghdr *c = CMSG_FIRSTHDR(&local_hdr); c != NULL && oi < out_size;
+         c = CMSG_NXTHDR(&local_hdr, c)) {
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s{cmsg_level=", first ? "" : ", ");
+        if (c->cmsg_level == SOL_SOCKET)
+            oi += (size_t)snprintf(out + oi, out_size - oi, "SOL_SOCKET");
+        else
+            oi += (size_t)snprintf(out + oi, out_size - oi, "0x%x", (unsigned int)c->cmsg_level);
+
+        if (oi >= out_size)
+            break;
+
+        if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_RIGHTS) {
+            size_t data_len = c->cmsg_len > CMSG_LEN(0) ? c->cmsg_len - CMSG_LEN(0) : 0;
+            size_t num_fds = data_len / sizeof(int);
+            oi += (size_t)snprintf(out + oi, out_size - oi, ", cmsg_type=SCM_RIGHTS, cmsg_data=[");
+            unsigned char *data = CMSG_DATA(c);
+            for (size_t i = 0; i < num_fds && oi < out_size; i++) {
+                int fd;
+                memcpy(&fd, data + i * sizeof(int), sizeof(int));
+                oi += (size_t)snprintf(out + oi, out_size - oi, "%s%d", i ? ", " : "", fd);
+            }
+            if (oi < out_size)
+                oi += (size_t)snprintf(out + oi, out_size - oi, "]}");
+        } else if (c->cmsg_level == SOL_SOCKET && c->cmsg_type == SCM_CREDENTIALS &&
+                   c->cmsg_len >= CMSG_LEN(sizeof(struct ucred))) {
+            struct ucred cred;
+            memcpy(&cred, CMSG_DATA(c), sizeof(cred));
+            oi += (size_t)snprintf(out + oi, out_size - oi,
+                                    ", cmsg_type=SCM_CREDENTIALS, cmsg_data={pid=%d, uid=%u, gid=%u}}",
+                                    (int)cred.pid, (unsigned int)cred.uid, (unsigned int)cred.gid);
+        } else {
+            oi += (size_t)snprintf(out + oi, out_size - oi, ", cmsg_type=0x%x, cmsg_len=%zu}",
+                                    (unsigned int)c->cmsg_type, (size_t)c->cmsg_len);
+        }
+        first = 0;
+    }
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, "]");
+}
+
+/* sendmsg/recvmsg's struct msghdr argument. sendmsg's msghdr is
+ * fully populated by the caller before the syscall runs (outgoing
+ * address, data, and ancillary data are all already in place), so
+ * it's decoded at the entry-stop like connect/bind/sendto's
+ * sockaddr; recvmsg's is only meaningful *after* the syscall
+ * returns (the kernel fills in the sender's address, the actual
+ * received bytes, ancillary data, and msg_flags), so it's decoded
+ * at the exit-stop like accept/getsockname's sockaddr — same
+ * function either way, called from two different points in
+ * mini_strace.c.
+ *
+ * total_bytes distinguishes the two cases for msg_iov: -1 means
+ * "trust each iovec's iov_len as given" (sendmsg — that's the
+ * caller's own outgoing data). A value >= 0 (recvmsg's return
+ * value) means the kernel only reports the *total* bytes received
+ * across every iovec, not per-iovec, so this walks the iovecs in
+ * order consuming that budget the same way the kernel itself filled
+ * them, the same convention real strace uses for recvmsg/readv. */
+#define MSGHDR_MAX_IOV 8
+
+void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
+                    char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    struct msghdr hdr;
+    if (read_child_raw(pid, addr, (unsigned char *)&hdr, sizeof(hdr)) < sizeof(hdr)) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    size_t oi = (size_t)snprintf(out, out_size, "{msg_name=");
+
+    if (hdr.msg_name != NULL && oi < out_size) {
+        char namebuf[STR_ARG_BUF_LEN];
+        format_sockaddr(pid, (unsigned long long)(uintptr_t)hdr.msg_name,
+                         hdr.msg_namelen, namebuf, sizeof(namebuf));
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s", namebuf);
+    } else if (oi < out_size) {
+        oi += (size_t)snprintf(out + oi, out_size - oi, "NULL");
+    }
+
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", msg_iov=[");
+
+    size_t iov_count = (size_t)hdr.msg_iovlen;
+    int truncated_iov = iov_count > MSGHDR_MAX_IOV;
+    if (truncated_iov)
+        iov_count = MSGHDR_MAX_IOV;
+
+    long remaining_bytes = total_bytes;
+    for (size_t i = 0; i < iov_count && oi < out_size; i++) {
+        struct iovec iov;
+        unsigned long long iov_addr = (unsigned long long)(uintptr_t)hdr.msg_iov + i * sizeof(struct iovec);
+        if (read_child_raw(pid, iov_addr, (unsigned char *)&iov, sizeof(iov)) < sizeof(iov))
+            break;
+
+        unsigned long long show_len = (unsigned long long)iov.iov_len;
+        if (total_bytes >= 0) {
+            unsigned long long avail = remaining_bytes > 0 ? (unsigned long long)remaining_bytes : 0;
+            if (show_len > avail)
+                show_len = avail;
+            remaining_bytes -= (long)show_len;
+        }
+
+        char iovbuf[STR_ARG_BUF_LEN];
+        read_child_buffer(pid, (unsigned long long)(uintptr_t)iov.iov_base, show_len,
+                           iovbuf, sizeof(iovbuf));
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s{iov_base=%s, iov_len=%zu}",
+                                i ? ", " : "", iovbuf, (size_t)iov.iov_len);
+    }
+    if (truncated_iov && oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", ...");
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, "]");
+
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", msg_control=");
+    if (hdr.msg_control != NULL && hdr.msg_controllen > 0 && oi < out_size) {
+        char cbuf[STR_ARG_BUF_LEN];
+        format_cmsg(pid, (unsigned long long)(uintptr_t)hdr.msg_control,
+                     (size_t)hdr.msg_controllen, cbuf, sizeof(cbuf));
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s", cbuf);
+    } else if (oi < out_size) {
+        oi += (size_t)snprintf(out + oi, out_size - oi, "NULL");
+    }
+
+    if (oi < out_size) {
+        char flagbuf[128];
+        format_msg_flags_value(hdr.msg_flags, flagbuf, sizeof(flagbuf));
+        snprintf(out + oi, out_size - oi, ", msg_flags=%s}", flagbuf);
+    }
 }

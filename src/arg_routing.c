@@ -467,6 +467,42 @@ unsigned char ioctl_request_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds sendmsg()'s struct msghdr*, decoded via
+ * format_msghdr() in decoders.c. sendmsg's msghdr is fully
+ * populated by the caller before the syscall runs, so like
+ * clone3_args_arg_table this is dereferenced at the entry-stop, not
+ * deferred. */
+static const string_arg_entry msghdr_send_arg_table[] = {
+    { "sendmsg",  0x02 },  /* arg 1 */
+    { NULL,       0x00 },
+};
+
+unsigned char msghdr_send_arg_mask(const char *syscall) {
+    for (int i = 0; msghdr_send_arg_table[i].name != NULL; i++) {
+        if (strcmp(msghdr_send_arg_table[i].name, syscall) == 0)
+            return msghdr_send_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds recvmsg()'s struct msghdr*. Unlike sendmsg,
+ * recvmsg's msghdr is only meaningful after the kernel has filled
+ * it in, so this is looked up the same way wait_status_arg_mask is
+ * and deferred to the exit-stop in mini_strace.c, not dereferenced
+ * here. */
+static const string_arg_entry msghdr_recv_arg_table[] = {
+    { "recvmsg",  0x02 },  /* arg 1 */
+    { NULL,       0x00 },
+};
+
+unsigned char msghdr_recv_arg_mask(const char *syscall) {
+    for (int i = 0; msghdr_recv_arg_table[i].name != NULL; i++) {
+        if (strcmp(msghdr_recv_arg_table[i].name, syscall) == 0)
+            return msghdr_recv_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Syscalls whose output is a raw byte buffer that's only populated
  * *after* the syscall actually runs — read()'s buf is garbage/empty
  * at the entry-stop, so unlike write() this can't be dereferenced

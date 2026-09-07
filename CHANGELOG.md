@@ -15,6 +15,15 @@ on release.
 
 ### Added
 
+- `sendmsg`/`recvmsg`: the full `struct msghdr` — destination/sender
+  address (via the same sockaddr decoding `connect`/`accept`/...
+  already get), each `iovec`'s data, and ancillary data. `sendmsg`'s
+  is decoded at the entry-stop (already the caller's own data);
+  `recvmsg`'s is deferred to the exit-stop, since the kernel only
+  fills it in once the call returns. `SCM_RIGHTS` (passed file
+  descriptors) and `SCM_CREDENTIALS` (sender pid/uid/gid) ancillary
+  data decode into their actual meaning; anything else shows
+  level/type/length only.
 - `ioctl`: the request code decoded by name for the terminal (tty)
   ioctls (`TIOCGWINSZ`, `FIONREAD`, ...), which cover most
   real-world traces; any other request falls back to decoding its

@@ -81,6 +81,13 @@ unsigned char clone3_args_arg_mask(const char *syscall);
 /* ioctl's request code. */
 unsigned char ioctl_request_arg_mask(const char *syscall);
 
+/* sendmsg's struct msghdr* — already populated at the entry-stop. */
+unsigned char msghdr_send_arg_mask(const char *syscall);
+
+/* recvmsg's struct msghdr* (deferred to the exit-stop — see
+ * mini_strace.c). */
+unsigned char msghdr_recv_arg_mask(const char *syscall);
+
 /* write's buffer + length — already populated at the entry-stop. */
 const buffer_arg_entry *buffer_arg_lookup(const char *syscall);
 

@@ -108,6 +108,7 @@ typedef struct {
     const buffer_arg_entry *pending_read_entry;
     const buffer_arg_entry *pending_sockaddr_entry;
     int pending_wait_status_idx;  /* -1 = none; which arg is wait4's wstatus */
+    int pending_msghdr_idx;       /* -1 = none; which arg is recvmsg's struct msghdr* */
     int suppressed;
     struct timespec entry_time;  /* when this syscall's entry-stop fired, for -T/-c */
     const char *current_name;    /* syscall in flight, for -c's per-name accounting */
@@ -373,6 +374,14 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     break;
                 }
             }
+            unsigned char msghdr_recv_mask = msghdr_recv_arg_mask(name);
+            int msghdr_recv_idx = -1;
+            for (int i = 0; i < 6; i++) {
+                if (msghdr_recv_mask & (1 << i)) {
+                    msghdr_recv_idx = i;
+                    break;
+                }
+            }
 
             if (show_timing || summary_mode)
                 clock_gettime(CLOCK_MONOTONIC, &ts->entry_time);
@@ -388,21 +397,24 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_read_entry = NULL;
                 ts->pending_sockaddr_entry = NULL;
                 ts->pending_wait_status_idx = -1;
-            } else if (read_entry != NULL || accept_entry != NULL || wait_status_idx >= 0) {
+                ts->pending_msghdr_idx = -1;
+            } else if (read_entry != NULL || accept_entry != NULL || wait_status_idx >= 0 ||
+                       msghdr_recv_idx >= 0) {
                 /* read()-family, accept/getsockname/getpeername-family,
-                 * and/or wait4: their buffer/sockaddr/wstatus is
-                 * unpopulated until the syscall actually runs, so
-                 * there's nothing useful to dereference yet — stash
-                 * everything and build the whole line at the exit-stop
-                 * instead. More than one can apply to the same call
-                 * (recvfrom has a deferred data buffer *and* a deferred
-                 * sockaddr); the exit-stop print below handles any
-                 * combination, or none, being set. */
+                 * wait4, and/or recvmsg: their buffer/sockaddr/wstatus/
+                 * msghdr is unpopulated until the syscall actually
+                 * runs, so there's nothing useful to dereference yet —
+                 * stash everything and build the whole line at the
+                 * exit-stop instead. More than one can apply to the
+                 * same call (recvfrom has a deferred data buffer *and*
+                 * a deferred sockaddr); the exit-stop print below
+                 * handles any combination, or none, being set. */
                 ts->pending_name = name;
                 memcpy(ts->pending_args, raw_args, sizeof(raw_args));
                 ts->pending_read_entry = read_entry;
                 ts->pending_sockaddr_entry = accept_entry;
                 ts->pending_wait_status_idx = wait_status_idx;
+                ts->pending_msghdr_idx = msghdr_recv_idx;
             } else {
                 /* everything else prints immediately, same as before:
                  * known path-string args get dereferenced, write()'s
@@ -411,6 +423,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_read_entry = NULL;
                 ts->pending_sockaddr_entry = NULL;
                 ts->pending_wait_status_idx = -1;
+                ts->pending_msghdr_idx = -1;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
@@ -428,6 +441,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char clone_flags_mask = clone_flags_arg_mask(name);
                     unsigned char clone3_args_mask = clone3_args_arg_mask(name);
                     unsigned char ioctl_request_mask = ioctl_request_arg_mask(name);
+                    unsigned char msghdr_send_mask = msghdr_send_arg_mask(name);
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
@@ -466,6 +480,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_clone3_flags(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (ioctl_request_mask & (1 << i))
                             format_ioctl_request(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (msghdr_send_mask & (1 << i))
+                            format_msghdr(wpid, raw_args[i], -1, argbuf[i], sizeof(argbuf[i]));
                         else if (buf_entry != NULL && i == buf_entry->buf_idx)
                             read_child_buffer(wpid, raw_args[i], raw_args[buf_entry->len_idx],
                                                argbuf[i], sizeof(argbuf[i]));
@@ -495,18 +511,18 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                  * nothing prints here either */
             } else {
                 if (ts->pending_read_entry != NULL || ts->pending_sockaddr_entry != NULL ||
-                    ts->pending_wait_status_idx >= 0) {
+                    ts->pending_wait_status_idx >= 0 || ts->pending_msghdr_idx >= 0) {
                     /* deferred print: build the whole "name(args) = ret"
                      * line now that the return value (and anything the
-                     * kernel filled in) is available. Any of the three
+                     * kernel filled in) is available. Any of the four
                      * pending fields can be set alone (read()-family,
-                     * accept/getsockname/getpeername-family, or wait4)
-                     * or combined (recvfrom: a deferred data buffer
-                     * *and* a deferred sockaddr in the same call) —
-                     * each claims its own argument slot, so there's no
-                     * conflict rendering them into the same line.
-                     * Skipped entirely under -c, which never prints
-                     * per-call lines. */
+                     * accept/getsockname/getpeername-family, wait4, or
+                     * recvmsg) or combined (recvfrom: a deferred data
+                     * buffer *and* a deferred sockaddr in the same
+                     * call) — each claims its own argument slot, so
+                     * there's no conflict rendering them into the same
+                     * line. Skipped entirely under -c, which never
+                     * prints per-call lines. */
                     if (!summary_mode) {
                         unsigned char fd_mask = show_fd_paths ? fd_arg_mask(ts->pending_name) : 0;
 
@@ -537,6 +553,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_sockaddr(wpid, ts->pending_args[i], addrlen, argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_wait_status_idx == i && ret >= 0)
                                 format_wait_status(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (ts->pending_msghdr_idx == i && ret >= 0)
+                                format_msghdr(wpid, ts->pending_args[i], ret, argbuf[i], sizeof(argbuf[i]));
                             else
                                 format_hex_or_fd_arg(wpid, ts->pending_args[i], fd_mask & (1 << i),
                                                       argbuf[i], sizeof(argbuf[i]));
@@ -548,6 +566,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     ts->pending_read_entry = NULL;
                     ts->pending_sockaddr_entry = NULL;
                     ts->pending_wait_status_idx = -1;
+                    ts->pending_msghdr_idx = -1;
                 }
 
                 double elapsed = 0.0;
