@@ -15,6 +15,7 @@ on release.
 
 ### Added
 
+- `LICENSE`: MIT.
 - `sendmsg`/`recvmsg`: the full `struct msghdr` — destination/sender
   address (via the same sockaddr decoding `connect`/`accept`/...
   already get), each `iovec`'s data, and ancillary data. `sendmsg`'s

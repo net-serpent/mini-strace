@@ -185,3 +185,7 @@ See [DESIGN.md](DESIGN.md#testing) for what this covers and why.
 
 Linux, x86-64 or ARM64, gcc, make, python3 (only used by the syscall
 table generator).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
