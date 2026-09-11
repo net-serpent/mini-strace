@@ -26,6 +26,13 @@ typedef struct {
     int len_idx;
 } buffer_arg_entry;
 
+/* "This syscall has exactly N of the 6 raw argument slots" shape,
+ * used by syscall_argc_table. */
+typedef struct {
+    const char *name;
+    int argc;
+} syscall_argc_entry;
+
 /* Path-string arguments (open, stat, execve, symlink, mount, ...). */
 unsigned char string_arg_mask(const char *syscall);
 
@@ -103,5 +110,9 @@ const buffer_arg_entry *accept_arg_lookup(const char *syscall);
 /* read/pread64/recvfrom's buffer + length, only populated *after*
  * the syscall runs (deferred to the exit-stop — see mini_strace.c). */
 const buffer_arg_entry *read_arg_lookup(const char *syscall);
+
+/* How many of the 6 raw argument slots this syscall actually has.
+ * -1 means unknown — mini_strace.c falls back to showing all 6. */
+int syscall_argc(const char *syscall);
 
 #endif /* MINI_STRACE_ARG_ROUTING_H */

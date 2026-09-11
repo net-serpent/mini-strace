@@ -57,15 +57,20 @@ names: `-e trace=file` shows only filesystem calls,
 `-e trace=network,openat` shows networking plus that one syscall.
 
 ```
-execve("/bin/cat", ["cat", "foo.txt"], ["PATH=/usr/bin", "HOME=/root"], 0xffffffff, 0x7f45c4f4c740) = 0
-access("/etc/ld.so.preload", 0x4, 0x556158984d10, 0x22, 0x7ff5eca8b000, 0x7ff5ecac1440) = -2 (ENOENT)
-openat(0xffffff9c, "/etc/ld.so.cache", 0x80000, 0x0, 0x0, 0x0) = 3
-openat(0xffffff9c, "/tmp/somefile.txt", 0x0, 0x0, 0xffffffff, 0x0) = 3
-read(0x3, "test data content\n", 0x20000, 0x22, 0x0, 0x7fe3515c0440) = 18
-write(0x1, "test data content\n", 0x12, 0x22, 0x0, 0x7fe3515c0440) = 18
-read(0x3, 0x7fa474eae000, 0x20000, 0x22, 0x0, 0x7fa474f1f440) = 0
+execve("/bin/cat", ["cat", "foo.txt"], ["PATH=/usr/bin", "HOME=/root"]) = 0
+access("/etc/ld.so.preload", 0x4) = -2 (ENOENT)
+openat(0xffffff9c, "/etc/ld.so.cache", 0x80000, 0x0) = 3
+openat(0xffffff9c, "/tmp/somefile.txt", 0x0, 0x0) = 3
+read(0x3, "test data content\n", 0x20000) = 18
+write(0x1, "test data content\n", 0x12) = 18
+read(0x3, 0x7fa474eae000, 0x20000) = 0
 [mini-strace] process exited, code 0, total syscalls: 37
 ```
+
+Each syscall prints exactly as many arguments as it actually takes
+(`access(path, mode)`, not six slots padded with leftover register
+values); an unrecognized syscall still shows all 6 raw slots, since
+its real arity isn't known.
 
 ## Build & run
 
@@ -139,8 +144,8 @@ String and buffer arguments are truncated at 200 bytes by default
 
 ```bash
 ./mini-strace -y /bin/cat /etc/hostname
-# openat(0xffffff9c, "/etc/hostname", 0x0, 0x0, 0x0, 0x0) = 3
-# read(3</etc/hostname>, "myhost\n"..., 0x20000, 0x1, 0x0, ...) = 7
+# openat(0xffffff9c, "/etc/hostname", 0x0, 0x0) = 3
+# read(3</etc/hostname>, "myhost\n"..., 0x20000) = 7
 ```
 
 On macOS:

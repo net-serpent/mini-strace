@@ -45,6 +45,18 @@ on release.
   values and a deterministic random stream against a range of
   output buffer sizes down to 0.
 
+### Changed
+
+- Syscalls now print exactly as many arguments as they actually
+  take (`access(path, mode)`), not all 6 raw register slots
+  regardless of real arity (`access(path, mode, 0x..., 0x...,
+  0x..., 0x...)`, the leftover 4 being whatever those registers
+  happened to hold). Covers every syscall this project already has
+  dedicated argument decoding for, plus a short list of syscalls
+  that show up in essentially every trace (`brk`, `mmap`/`munmap`,
+  `getpid` and similar process/thread info, ...); anything else
+  still falls back to all 6, since its real arity isn't known.
+
 ### Fixed
 
 - `format_map_flags`'s final fallback `snprintf` call was missing

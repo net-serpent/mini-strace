@@ -265,7 +265,7 @@ out=$($STRACE python3 -c '
 import os
 os.kill(os.getpid(), 0)
 ' 2>&1)
-check_contains "null signal (0) printed as plain 0, not a fake name" 'kill\([^,]*, 0,' "$out"
+check_contains "null signal (0) printed as plain 0, not a fake name" 'kill\([^,]*, 0\)' "$out"
 
 echo "=== lseek() whence decoding ==="
 out=$($STRACE python3 -c '
@@ -553,6 +553,31 @@ check_contains "sendmsg's multiple iovecs decoded in order" \
     'sendmsg\(.*iov_base="ab", iov_len=2\}, \{iov_base="cdef", iov_len=4\}' "$out"
 check_contains "sendmsg's msg_control shown as NULL when absent" \
     'sendmsg\(.*msg_control=NULL' "$out"
+
+echo "=== argument count matches real syscall arity ==="
+cat >/tmp/mini_strace_test_argc.c <<'EOF'
+#include <unistd.h>
+#include <fcntl.h>
+
+int main(void) {
+    access("/", 0);   /* F_OK == 0; syscall_argc_table: 2 real args */
+    getpid();         /* syscall_argc_table: 0 args */
+
+    int fd = open("/", O_RDONLY);
+    posix_fadvise(fd, 0, 0, POSIX_FADV_NORMAL);  /* not in syscall_argc_table */
+    close(fd);
+
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_argc /tmp/mini_strace_test_argc.c
+out=$($STRACE /tmp/mini_strace_test_argc 2>&1)
+check_contains "access()/faccessat() prints exactly its real arguments, not all 6 raw slots" \
+    '(access\("/", F_OK\)|faccessat\([^,]*, "/", F_OK\))' "$out"
+check_contains "a 0-argument syscall (getpid) prints with no arguments at all" \
+    'getpid\(\)' "$out"
+check_contains "a syscall not in syscall_argc_table still falls back to all 6 raw slots" \
+    'fadvise64\(([^,]*,){5}[^)]*\)' "$out"
 
 echo "=== -p attach ==="
 sleep 5 &

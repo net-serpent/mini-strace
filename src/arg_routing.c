@@ -526,3 +526,166 @@ const buffer_arg_entry *read_arg_lookup(const char *syscall) {
     }
     return NULL;
 }
+
+/* How many of the 6 raw argument slots a syscall actually has, so
+ * mini_strace.c can print exactly that many instead of always all
+ * 6 (most of which would otherwise be leftover register garbage —
+ * access(path, mode) has never had more than 2 real arguments).
+ * Counts are the *raw kernel syscall*'s arity, not the glibc
+ * wrapper's — those occasionally differ (fchmodat's libc wrapper
+ * takes a 4th "flags" argument that isn't part of the actual
+ * fchmodat syscall and is silently dropped, or emulated by libc
+ * without a flags-capable fchmodat kernel syscall at all; the raw
+ * syscall this project actually traces only ever sees 3).
+ *
+ * Deliberately not exhaustive over every Linux syscall — that
+ * would mean a table with hundreds of entries this project has no
+ * way to verify against real behavior for the ones nobody's
+ * traced. It covers every syscall this file already has dedicated
+ * argument decoding for (their real signatures had to be known
+ * anyway to write that decoding) plus a short list of syscalls
+ * that show up in essentially every trace regardless of what's
+ * being run (process startup bookkeeping, basic process/thread
+ * info). Anything not listed here falls back to the old
+ * behavior — all 6 slots shown — rather than guessing. */
+static const syscall_argc_entry syscall_argc_table[] = {
+    /* already-decoded syscalls, grouped the same way arg_routing's
+     * other tables are: file/path operations first, then sockets,
+     * then everything else. */
+    { "access",         2 },
+    { "faccessat",      3 },
+    { "faccessat2",     4 },
+    { "chdir",          1 },
+    { "chmod",          2 },
+    { "fchmod",         2 },
+    { "fchmodat",       3 },
+    { "chown",          3 },
+    { "fchown",         3 },
+    { "fchownat",       5 },
+    { "lchown",         3 },
+    { "chroot",         1 },
+    { "creat",          2 },
+    { "open",           3 },
+    { "openat",         4 },
+    { "close",          1 },
+    { "read",           3 },
+    { "write",          3 },
+    { "pread64",        4 },
+    { "pwrite64",       4 },
+    { "lseek",          3 },
+    { "fcntl",          3 },
+    { "flock",          2 },
+    { "fsync",          1 },
+    { "fdatasync",      1 },
+    { "ftruncate",      2 },
+    { "truncate",       2 },
+    { "stat",           2 },
+    { "lstat",          2 },
+    { "fstat",          2 },
+    { "newfstatat",     4 },
+    { "statx",          5 },
+    { "statfs",         2 },
+    { "fstatfs",        2 },
+    { "readlink",       3 },
+    { "readlinkat",     4 },
+    { "symlink",        2 },
+    { "symlinkat",      3 },
+    { "link",           2 },
+    { "linkat",         5 },
+    { "rename",         2 },
+    { "renameat",       4 },
+    { "renameat2",      5 },
+    { "unlink",         1 },
+    { "unlinkat",       3 },
+    { "mkdir",          2 },
+    { "mkdirat",        3 },
+    { "rmdir",          1 },
+    { "utime",          2 },
+    { "utimes",         2 },
+    { "futimesat",      3 },
+    { "mount",          5 },
+    { "umount2",        2 },
+    { "pivot_root",     2 },
+    { "execve",         3 },
+    { "execveat",       5 },
+    { "dup",            1 },
+    { "dup2",           2 },
+    { "dup3",           3 },
+    { "mmap",           6 },
+    { "mprotect",       3 },
+    { "kill",           2 },
+    { "tkill",          2 },
+    { "tgkill",         3 },
+    { "wait4",          4 },
+    { "clock_gettime",  2 },
+    { "clock_settime",  2 },
+    { "clock_getres",   2 },
+    { "clock_nanosleep", 4 },
+    { "rt_sigprocmask", 4 },
+    { "clone",          5 },
+    { "clone3",         2 },
+    { "ioctl",          3 },
+    /* socket family */
+    { "socket",         3 },
+    { "socketpair",     4 },
+    { "bind",           3 },
+    { "listen",         2 },
+    { "accept",         3 },
+    { "accept4",        4 },
+    { "connect",        3 },
+    { "getsockname",    3 },
+    { "getpeername",    3 },
+    { "setsockopt",     5 },
+    { "getsockopt",     5 },
+    { "shutdown",       2 },
+    { "sendto",         6 },
+    { "recvfrom",       6 },
+    { "sendmsg",        3 },
+    { "recvmsg",        3 },
+
+    /* not otherwise decoded, but common enough (process startup,
+     * basic process/thread info) to be worth the same treatment. */
+    { "brk",            1 },
+    { "munmap",         2 },
+    { "arch_prctl",     2 },
+    { "set_tid_address", 1 },
+    { "set_robust_list", 2 },
+    { "rseq",           4 },
+    { "prlimit64",      4 },
+    { "getrandom",      3 },
+    { "rt_sigaction",   4 },
+    { "rt_sigreturn",   0 },
+    { "sched_yield",    0 },
+    { "madvise",        3 },
+    { "poll",           3 },
+    { "pipe",           1 },
+    { "pipe2",          2 },
+    { "getcwd",         2 },
+    { "getdents64",     3 },
+    { "prctl",          5 },
+    { "alarm",          1 },
+    { "pause",          0 },
+    { "nanosleep",      2 },
+    { "sync",           0 },
+    { "exit",           1 },
+    { "exit_group",     1 },
+    { "fork",           0 },
+    { "vfork",          0 },
+    { "getuid",         0 },
+    { "getgid",         0 },
+    { "geteuid",        0 },
+    { "getegid",        0 },
+    { "getpid",         0 },
+    { "getppid",        0 },
+    { "gettid",         0 },
+
+    { NULL,             0 },
+};
+
+int syscall_argc(const char *syscall) {
+    for (int i = 0; syscall_argc_table[i].name != NULL; i++) {
+        if (strcmp(syscall_argc_table[i].name, syscall) == 0)
+            return syscall_argc_table[i].argc;
+    }
+    return -1;
+}

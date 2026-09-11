@@ -222,6 +222,22 @@ static void print_summary(FILE *out) {
             grand_total, "", grand_calls, grand_errors);
 }
 
+/* Prints "name(arg0, arg1, ...) " with exactly as many arguments as
+ * syscall_argc() knows this syscall actually has, instead of always
+ * all 6 raw slots — real strace never shows access()'s 4 leftover
+ * register values, so neither should this. Falls back to all 6 for
+ * anything syscall_argc() doesn't recognize (-1), which is exactly
+ * the old fixed behavior. */
+static void print_call(FILE *out, const char *pid_prefix, const char *name,
+                        char argbuf[6][STR_ARG_BUF_LEN]) {
+    int argc = syscall_argc(name);
+    int n = (argc < 0 || argc > 6) ? 6 : argc;
+    fprintf(out, "%s%s(", pid_prefix, name);
+    for (int i = 0; i < n; i++)
+        fprintf(out, "%s%s", i ? ", " : "", argbuf[i]);
+    fprintf(out, ") ");
+}
+
 /* follow_forks (-f) makes the tracer follow fork()/vfork()/clone()
  * into child processes instead of only ever watching the one process
  * it started with. Without it, the loop only has one tracee ever, so
@@ -493,9 +509,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                                   argbuf[i], sizeof(argbuf[i]));
                     }
 
-                    fprintf(trace_out, "%s%s(%s, %s, %s, %s, %s, %s) ",
-                            pid_prefix, name, argbuf[0], argbuf[1], argbuf[2],
-                            argbuf[3], argbuf[4], argbuf[5]);
+                    print_call(trace_out, pid_prefix, name, argbuf);
                     fflush(trace_out);
                 }
             }
@@ -559,9 +573,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_hex_or_fd_arg(wpid, ts->pending_args[i], fd_mask & (1 << i),
                                                       argbuf[i], sizeof(argbuf[i]));
                         }
-                        fprintf(trace_out, "%s%s(%s, %s, %s, %s, %s, %s) ",
-                                pid_prefix, ts->pending_name, argbuf[0], argbuf[1], argbuf[2],
-                                argbuf[3], argbuf[4], argbuf[5]);
+                        print_call(trace_out, pid_prefix, ts->pending_name, argbuf);
                     }
                     ts->pending_read_entry = NULL;
                     ts->pending_sockaddr_entry = NULL;

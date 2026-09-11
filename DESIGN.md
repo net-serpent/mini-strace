@@ -47,6 +47,52 @@ level of indirection (`__NR_mmap` -> `__NR3264_mmap` -> `222`); the
 generator follows that chain. The table is regenerated on every
 `make` and is not committed, since it must match the build machine.
 
+## Argument count: syscall_argc_table
+
+Every syscall's raw arguments live in 6 fixed registers regardless
+of how many of them the syscall actually uses — the ABI doesn't
+distinguish "unused" from "zero". Originally this codebase printed
+all 6 unconditionally, so `access(path, mode)` showed 4 extra fields
+that were just whatever those registers happened to hold at the
+time, and a 0-argument syscall like `getpid` showed 6 of them.
+
+`syscall_argc()` (`arg_routing.c`) is a lookup from syscall name to
+its real argument count, and `print_call()` (`mini_strace.c`) uses
+it to print only that many of the 6 formatted `argbuf` slots instead
+of always all 6; a name it doesn't recognize falls back to the old
+behavior (all 6), rather than guessing.
+
+Counts are the *raw kernel syscall*'s arity, not the glibc wrapper
+function's — these occasionally differ. `fchmodat`'s libc wrapper
+takes a 4th `flags` argument that the actual `fchmodat` syscall
+doesn't have (flags support needs the newer `fchmodat2` syscall
+instead, which glibc falls back from only when the kernel supports
+it); tracing the raw syscall this project actually sees means the
+real arity is 3, matching the kernel, not 4.
+
+The table isn't exhaustive over every Linux syscall (there are
+hundreds, and this project has no way to verify correctness against
+real behavior for ones nobody's actually traced with it). It covers
+every syscall this codebase already has dedicated argument decoding
+for elsewhere in this file — their real signatures already had to
+be known to write that decoding — plus a short list of syscalls
+that show up in essentially every trace regardless of what's being
+run (`brk`, `mmap`/`munmap`, process/thread info like `getpid`,
+`exit_group`, and similar startup bookkeeping).
+
+Verifying this against real traces in this project's aarch64 dev
+container surfaced a portability trap: aarch64's generic syscall ABI
+dropped several legacy syscalls entirely, so `access()` on aarch64
+actually runs as a `faccessat(AT_FDCWD, path, mode)` call under the
+hood (3 real arguments) rather than the 2-argument `access` syscall
+x86-64 still has, and `vfork()` doesn't exist there as its own raw
+syscall at all (aarch64 only implements vfork semantics via
+`clone(CLONE_VFORK, ...)`). Both counts are correct, they just apply
+to different underlying syscalls depending on which architecture
+actually ran the trace; `syscall_argc_table` carries entries for
+both names with their own correct arity, and nothing resolves one
+name to the other.
+
 ## Deferred prints: read(), sockaddr, wait4
 
 `write()`'s buffer has real data at the entry-stop, so it prints
