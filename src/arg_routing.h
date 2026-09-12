@@ -79,6 +79,10 @@ unsigned char clockid_arg_mask(const char *syscall);
 /* wait4's wstatus (deferred to the exit-stop — see mini_strace.c). */
 unsigned char wait_status_arg_mask(const char *syscall);
 
+/* stat/lstat/fstat/newfstatat's output struct stat (deferred to the
+ * exit-stop — see mini_strace.c). */
+unsigned char stat_buf_arg_mask(const char *syscall);
+
 /* clone's flags. */
 unsigned char clone_flags_arg_mask(const char *syscall);
 

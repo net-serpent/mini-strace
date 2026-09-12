@@ -437,6 +437,59 @@ value while the receive buffer's full declared size stays in
 multiple iovecs render in order with `msg_control=NULL` when there
 isn't any.
 
+## stat/lstat/fstat/newfstatat struct stat
+
+`stat`, `lstat`, and `fstat`'s output `struct stat` is a fourth
+deferred-argument shape (alongside `read()`'s buffer,
+`accept`-family's sockaddr, and `wait4`'s wstatus in "Deferred
+prints" above): unpopulated at the entry-stop, valid only once the
+syscall returns, so `stat_buf_arg_mask` and `pending_stat_idx`
+follow the same entry/exit split as `pending_wait_status_idx`.
+`newfstatat` (what `stat`/`lstat`'s libc wrappers actually call on
+architectures that dropped the legacy syscalls — see below) writes
+the same struct at a different argument index (2, not 1, since it
+also takes a `dirfd`), so it gets its own table entry rather than
+being treated as an alias.
+
+`format_stat_buf()` reads `struct stat` directly into a local
+variable via `read_child_raw()`, the same trick `format_msghdr()`
+uses for `struct msghdr`: it's an ordinary type already available
+through `<sys/stat.h>`, and ptrace only ever traces a process on the
+same machine and architecture, so the tracee's layout matches the
+tracer's exactly — including the parts of `struct stat`'s layout
+(field widths, padding) that actually differ between x86-64 and
+aarch64, since whichever one this is built for is the one whose
+`<sys/stat.h>` got compiled in.
+
+Only `st_mode` (file type via `S_ISREG`-style macros, plus the
+permission bits in octal), `st_size`, `st_nlink`, `st_uid`, and
+`st_gid` are decoded — the fields most worth seeing at a glance.
+Timestamps aren't: turning `st_atime`/`st_mtime`/`st_ctime` into
+anything more readable than a raw epoch integer needs real time
+formatting, more machinery than this project's other decoders take
+on for one struct's fields.
+
+Adding `stat`/`lstat`/`newfstatat` to the deferred category surfaced
+a real gap in the deferred exit-stop print path: it checked
+`fd_arg_mask` for its fallback case but never `string_arg_mask`, so
+a deferred syscall's path argument (something none of the three
+pre-existing deferred cases — `read`, sockaddr, `wait4` — actually
+have) printed as a raw pointer instead of a decoded string.
+`newfstatat("/etc/hostname", ...)` briefly regressed to
+`newfstatat(0xaaaa1234, ...)` before this was caught by manually
+diffing real trace output against expectations, not by the existing
+test suite (none of it exercised a deferred call with a path
+argument until this feature added one). Fixed by checking
+`string_arg_mask` first in the exit-stop's per-argument loop, same
+priority position it has in the entry-stop's immediate-print loop.
+
+Verified against a real file (`fstat` decodes `S_IFREG` and the
+right size), a symlink via `lstat` (decodes `S_IFLNK|0777` without
+following it — permission bits on a symlink are meaningless and the
+kernel reports them as `0777` by convention), and a nonexistent path
+(the call fails with `ENOENT` and the unpopulated struct correctly
+falls back to a raw pointer instead of decoding garbage).
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real

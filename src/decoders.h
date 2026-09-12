@@ -87,4 +87,9 @@ void format_ioctl_request(unsigned long long value, char *out, size_t out_size);
 void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
                     char *out, size_t out_size);
 
+/* stat/lstat/fstat/newfstatat's output struct stat — st_mode (file
+ * type + permissions), st_size, st_nlink, st_uid, st_gid. Only
+ * meaningful after the syscall returns. */
+void format_stat_buf(pid_t pid, unsigned long long addr, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

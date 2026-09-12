@@ -50,6 +50,9 @@ bare pointer or a raw number:
   address, each `iovec`'s data, and ancillary data (`SCM_RIGHTS`
   file descriptor passing, `SCM_CREDENTIALS`) instead of a raw
   pointer
+- `stat`/`lstat`/`fstat`/`newfstatat`: the resulting `struct stat`
+  (`{st_mode=S_IFREG|0644, st_size=1234, st_nlink=1, st_uid=0,
+  st_gid=0}`) instead of a raw pointer
 
 Narrow the trace with `-e trace=SET`, a comma-separated mix of
 categories (`file`, `network`, `process`) and/or exact syscall

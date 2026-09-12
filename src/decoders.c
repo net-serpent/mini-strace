@@ -16,6 +16,7 @@
 #include <linux/ioctl.h>
 #include <sys/uio.h>
 #include <stdint.h>
+#include <sys/stat.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -939,4 +940,67 @@ void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
         format_msg_flags_value(hdr.msg_flags, flagbuf, sizeof(flagbuf));
         snprintf(out + oi, out_size - oi, ", msg_flags=%s}", flagbuf);
     }
+}
+
+/* stat/lstat/fstat/newfstatat's output struct stat, only meaningful
+ * *after* the syscall returns (deferred to the exit-stop, like
+ * accept's sockaddr or recvmsg's msghdr) — struct stat is read
+ * directly into a local struct the same way struct msghdr is in
+ * format_msghdr(), rather than hand-decoding field offsets: it's an
+ * ordinary type this file already includes via <sys/stat.h>, and
+ * ptrace only ever traces a process on the same machine and
+ * architecture, so the tracee's layout matches the tracer's own
+ * exactly — including the parts of the layout (field widths,
+ * padding) that actually differ between x86-64 and aarch64, since
+ * whichever one this is built for is the one whose <sys/stat.h> got
+ * compiled in.
+ *
+ * Only st_mode (file type + permission bits), st_size, st_nlink,
+ * st_uid, and st_gid are decoded — the fields most worth seeing at
+ * a glance. Timestamps aren't: converting st_atime/st_mtime/
+ * st_ctime into anything more readable than a raw epoch integer
+ * would need real time formatting, which is more machinery than
+ * this project's other decoders take on for one struct's fields. */
+static const char *stat_file_type_name(mode_t mode) {
+    switch (mode & S_IFMT) {
+        case S_IFREG:  return "S_IFREG";
+        case S_IFDIR:  return "S_IFDIR";
+        case S_IFCHR:  return "S_IFCHR";
+        case S_IFBLK:  return "S_IFBLK";
+        case S_IFIFO:  return "S_IFIFO";
+        case S_IFLNK:  return "S_IFLNK";
+        case S_IFSOCK: return "S_IFSOCK";
+        default:       return NULL;
+    }
+}
+
+void format_stat_buf(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    struct stat st;
+    if (read_child_raw(pid, addr, (unsigned char *)&st, sizeof(st)) < sizeof(st)) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    const char *type_name = stat_file_type_name(st.st_mode);
+    size_t oi;
+    if (type_name != NULL)
+        oi = (size_t)snprintf(out, out_size, "{st_mode=%s|0%o", type_name,
+                               (unsigned int)(st.st_mode & ~(mode_t)S_IFMT));
+    else
+        oi = (size_t)snprintf(out, out_size, "{st_mode=0%o", (unsigned int)st.st_mode);
+
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", st_size=%lld", (long long)st.st_size);
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", st_nlink=%llu",
+                                (unsigned long long)st.st_nlink);
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", st_uid=%u", (unsigned int)st.st_uid);
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, ", st_gid=%u}", (unsigned int)st.st_gid);
 }

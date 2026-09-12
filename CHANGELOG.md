@@ -16,6 +16,11 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `stat`/`lstat`/`fstat`/`newfstatat`: the resulting `struct stat`
+  (`st_mode` as file type + permission bits, `st_size`, `st_nlink`,
+  `st_uid`, `st_gid`) instead of a raw pointer. Deferred to the
+  exit-stop like `wait4`'s wstatus, since the struct isn't populated
+  until the syscall actually returns.
 - `sendmsg`/`recvmsg`: the full `struct msghdr` — destination/sender
   address (via the same sockaddr decoding `connect`/`accept`/...
   already get), each `iovec`'s data, and ancillary data. `sendmsg`'s

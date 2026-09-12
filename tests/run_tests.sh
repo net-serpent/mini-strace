@@ -579,6 +579,37 @@ check_contains "a 0-argument syscall (getpid) prints with no arguments at all" \
 check_contains "a syscall not in syscall_argc_table still falls back to all 6 raw slots" \
     'fadvise64\(([^,]*,){5}[^)]*\)' "$out"
 
+echo "=== stat/lstat/fstat/newfstatat struct stat decoding ==="
+cat >/tmp/mini_strace_test_stat.c <<'EOF'
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+int main(void) {
+    int fd = open("/etc/hostname", O_RDONLY);
+    struct stat st;
+    fstat(fd, &st);
+    close(fd);
+
+    symlink("/etc/hostname", "/tmp/mini_strace_test_symlink");
+    lstat("/tmp/mini_strace_test_symlink", &st);
+
+    stat("/definitely/does/not/exist", &st);
+
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_stat /tmp/mini_strace_test_stat.c
+out=$($STRACE /tmp/mini_strace_test_stat 2>&1)
+check_contains "fstat decodes a regular file's type and permissions" \
+    'stat\(.*st_mode=S_IFREG\|[0-7]+' "$out"
+check_contains "lstat decodes a symlink as S_IFLNK, not following it" \
+    '(stat|newfstatat)\(.*S_IFLNK' "$out"
+check_contains "the stat family's path argument still decodes as a string alongside the deferred struct stat" \
+    '(stat\(|newfstatat\([^,]*, )"/tmp/mini_strace_test_symlink"' "$out"
+check_contains "a failed stat leaves the unpopulated struct stat as raw hex, not garbage decoded content" \
+    '(stat|newfstatat)\([^{]*\) = -2 \(ENOENT\)' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

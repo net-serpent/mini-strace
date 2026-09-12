@@ -410,6 +410,27 @@ unsigned char wait_status_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds stat/lstat/fstat/newfstatat's output struct
+ * stat, decoded via format_stat_buf() in decoders.c. Like wait4's
+ * wstatus, this is only populated once the syscall actually returns,
+ * so it's deferred to the exit-stop the same way, not dereferenced
+ * at entry. */
+static const string_arg_entry stat_buf_arg_table[] = {
+    { "stat",        0x02 },  /* arg 1 */
+    { "lstat",       0x02 },  /* arg 1 */
+    { "fstat",       0x02 },  /* arg 1 */
+    { "newfstatat",  0x04 },  /* arg 2 */
+    { NULL,          0x00 },
+};
+
+unsigned char stat_buf_arg_mask(const char *syscall) {
+    for (int i = 0; stat_buf_arg_table[i].name != NULL; i++) {
+        if (strcmp(stat_buf_arg_table[i].name, syscall) == 0)
+            return stat_buf_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds clone()'s flags, decoded via
  * format_clone_flags() in decoders.c. Both x86-64 and aarch64 use
  * the same raw syscall argument order for clone (flags, stack,
