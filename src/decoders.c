@@ -17,6 +17,7 @@
 #include <sys/uio.h>
 #include <stdint.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -1003,4 +1004,108 @@ void format_stat_buf(pid_t pid, unsigned long long addr, char *out, size_t out_s
         oi += (size_t)snprintf(out + oi, out_size - oi, ", st_uid=%u", (unsigned int)st.st_uid);
     if (oi < out_size)
         snprintf(out + oi, out_size - oi, ", st_gid=%u}", (unsigned int)st.st_gid);
+}
+
+/* getdents64()'s output buffer, only meaningful *after* the syscall
+ * returns (deferred to the exit-stop, like read()'s buffer) —
+ * unlike read(), the returned bytes aren't raw data to dump, they're
+ * a packed sequence of directory entries to parse.
+ *
+ * The kernel's wire format (struct linux_dirent64, from getdents64(2))
+ * isn't exposed by any glibc header — glibc only exposes the higher-
+ * level opendir()/readdir() API built on top of it — so unlike
+ * struct stat/msghdr above, there's no real local type to overlay
+ * onto a read_child_raw() copy. Fields are read at their fixed
+ * byte offsets instead, the same approach format_clone3_flags() uses
+ * for struct clone_args, another kernel-only type with no glibc
+ * declaration. This wire format has no architecture-specific
+ * variants (unlike struct stat/clone_args) — getdents64 has used one
+ * fixed 64-bit layout across every architecture since it was added:
+ *
+ *   u64            d_ino;     offset 0
+ *   s64            d_off;     offset 8
+ *   unsigned short d_reclen;  offset 16
+ *   unsigned char  d_type;    offset 18
+ *   char           d_name[];  offset 19, NUL-terminated, padded to
+ *                             fill out d_reclen bytes
+ *
+ * Entries are packed back-to-back with no separator; d_reclen (each
+ * entry's own size, header included) is how far to advance to reach
+ * the next one, so malformed data (a d_reclen too small to hold a
+ * header, or one that would read past the bytes actually returned)
+ * just stops parsing rather than reading garbage. */
+#define GETDENTS_HEADER_SIZE 19
+#define GETDENTS_MAX_BYTES 4096
+#define GETDENTS_MAX_ENTRIES 8
+
+static const char *dirent_type_name(unsigned char d_type) {
+    switch (d_type) {
+        case DT_REG:  return "DT_REG";
+        case DT_DIR:  return "DT_DIR";
+        case DT_LNK:  return "DT_LNK";
+        case DT_CHR:  return "DT_CHR";
+        case DT_BLK:  return "DT_BLK";
+        case DT_FIFO: return "DT_FIFO";
+        case DT_SOCK: return "DT_SOCK";
+        default:      return "DT_UNKNOWN";
+    }
+}
+
+void format_getdents_buf(pid_t pid, unsigned long long addr, long ret, char *out, size_t out_size) {
+    if (ret <= 0) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    size_t want = (size_t)ret < GETDENTS_MAX_BYTES ? (size_t)ret : GETDENTS_MAX_BYTES;
+    unsigned char buf[GETDENTS_MAX_BYTES];
+    size_t got = read_child_raw(pid, addr, buf, want);
+    if (got < GETDENTS_HEADER_SIZE) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    size_t oi = (size_t)snprintf(out, out_size, "[");
+    size_t pos = 0;
+    int count = 0;
+    int more = 0;
+
+    while (pos + GETDENTS_HEADER_SIZE <= got) {
+        unsigned long long d_ino;
+        long long d_off;
+        unsigned short d_reclen;
+        memcpy(&d_ino, buf + pos, 8);
+        memcpy(&d_off, buf + pos + 8, 8);
+        memcpy(&d_reclen, buf + pos + 16, 2);
+        unsigned char d_type = buf[pos + 18];
+
+        if (d_reclen < GETDENTS_HEADER_SIZE || pos + d_reclen > got) {
+            more = 1;
+            break;
+        }
+        if (count >= GETDENTS_MAX_ENTRIES) {
+            more = 1;
+            break;
+        }
+
+        size_t name_cap = d_reclen - GETDENTS_HEADER_SIZE;
+        size_t name_len = strnlen((const char *)(buf + pos + GETDENTS_HEADER_SIZE), name_cap);
+
+        if (oi < out_size)
+            oi += (size_t)snprintf(out + oi, out_size - oi,
+                    "%s{d_ino=%llu, d_off=%lld, d_reclen=%u, d_name=\"%.*s\", d_type=%s}",
+                    count ? ", " : "", d_ino, d_off, (unsigned int)d_reclen,
+                    (int)name_len, (const char *)(buf + pos + GETDENTS_HEADER_SIZE),
+                    dirent_type_name(d_type));
+
+        pos += d_reclen;
+        count++;
+    }
+
+    if (pos < got)
+        more = 1;
+    if (more && oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s...", count ? ", " : "");
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, "]");
 }

@@ -83,6 +83,10 @@ unsigned char wait_status_arg_mask(const char *syscall);
  * exit-stop — see mini_strace.c). */
 unsigned char stat_buf_arg_mask(const char *syscall);
 
+/* getdents64's output buffer of directory entries (deferred to the
+ * exit-stop — see mini_strace.c). */
+unsigned char getdents_buf_arg_mask(const char *syscall);
+
 /* clone's flags. */
 unsigned char clone_flags_arg_mask(const char *syscall);
 

@@ -16,6 +16,12 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `getdents64`: the directory entries actually read (`d_ino`,
+  `d_off`, `d_reclen`, `d_name`, `d_type` via the real `DT_*`
+  macros) instead of a raw buffer pointer. Capped at 8 rendered
+  entries and 4096 bytes read, with a trailing `...` when either
+  limit is hit. Also added to `trace_filter.c`'s `file` category for
+  `-e trace=file`, which it had been missing from.
 - `stat`/`lstat`/`fstat`/`newfstatat`: the resulting `struct stat`
   (`st_mode` as file type + permission bits, `st_size`, `st_nlink`,
   `st_uid`, `st_gid`) instead of a raw pointer. Deferred to the

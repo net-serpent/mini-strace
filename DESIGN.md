@@ -490,6 +490,60 @@ kernel reports them as `0777` by convention), and a nonexistent path
 (the call fails with `ENOENT` and the unpopulated struct correctly
 falls back to a raw pointer instead of decoding garbage).
 
+## getdents64 directory entries
+
+`getdents64`'s output buffer is deferred the same way `read()`'s is
+(unpopulated at the entry-stop, real return value tells the tracer
+how many bytes are actually valid), but unlike `read()` the bytes
+aren't arbitrary data to dump as an escaped string — they're a
+packed sequence of directory entries to parse, so this gets its own
+`pending_getdents_idx` and its own decoder rather than reusing
+`read_arg_table`/`read_child_buffer`.
+
+The kernel's wire format for each entry (`struct linux_dirent64` per
+`getdents64(2)`) isn't exposed by any glibc header — glibc only
+exposes the higher-level `opendir()`/`readdir()` API built on top of
+it — so like `struct clone_args` in the `clone3` section above,
+there's no real local type to overlay a `read_child_raw()` copy
+onto. Fields are read at their fixed byte offsets instead: `u64
+d_ino` at 0, `s64 d_off` at 8, `u16 d_reclen` at 16, `u8 d_type` at
+18, then a NUL-terminated `d_name` starting at 19, padded to fill
+out `d_reclen` bytes. Unlike `struct stat`/`clone_args`, this layout
+has no architecture-specific variants — it's one fixed format across
+every Linux architecture since it was introduced.
+
+Entries are packed back-to-back with no separator; each entry's own
+`d_reclen` (its total size, header included) says how far to advance
+to find the next one. A `d_reclen` too small to hold a header, or
+one that would read past the bytes actually returned, stops parsing
+immediately rather than reading past what was actually copied out of
+the tracee. Both the number of bytes read (`GETDENTS_MAX_BYTES`,
+4096) and the number of entries actually rendered
+(`GETDENTS_MAX_ENTRIES`, 8) are capped, with a trailing `...` when
+either limit was hit — a directory listing can have thousands of
+entries, and a single trace line showing all of them would be far
+less readable than a real terminal ever wants.
+
+`d_type` is decoded via the real `DT_REG`/`DT_DIR`/`DT_LNK`/...
+macros from `<dirent.h>`, matching every other exact-value lookup in
+this file (clockid, fcntl's cmd, ...) using real macros over
+hardcoded numbers. `d_off` is shown as whatever integer the
+filesystem actually put there — on most filesystems this is an
+opaque seek cookie, not a sequential counter, so large
+unpredictable-looking values are expected and correct, not a sign
+of anything decoded wrong.
+
+Also added `getdents64` to `trace_filter.c`'s `file` category list
+for `-e trace=file` — it was missing even though every other
+directory-adjacent syscall (`getcwd`, `readlink`, ...) was already
+in it.
+
+Verified against a real directory: a regular file and a symlink both
+decode with the correct `d_type`, the final "no more entries" call
+(return value `0`) falls back to a raw pointer rather than an empty
+or garbage decode, and a 20-file directory confirms the entry-count
+cap triggers the `...` truncation marker.
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real

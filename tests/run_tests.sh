@@ -610,6 +610,50 @@ check_contains "the stat family's path argument still decodes as a string alongs
 check_contains "a failed stat leaves the unpopulated struct stat as raw hex, not garbage decoded content" \
     '(stat|newfstatat)\([^{]*\) = -2 \(ENOENT\)' "$out"
 
+echo "=== getdents64 directory entry decoding ==="
+mkdir -p /tmp/mini_strace_test_dir
+: > /tmp/mini_strace_test_dir/regularfile.txt
+ln -sf regularfile.txt /tmp/mini_strace_test_dir/symlinkfile
+cat >/tmp/mini_strace_test_getdents.c <<'EOF'
+#include <sys/types.h>
+#include <dirent.h>
+#include <stddef.h>
+
+int main(void) {
+    DIR *d = opendir("/tmp/mini_strace_test_dir");
+    while (readdir(d) != NULL) {}
+    closedir(d);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_getdents /tmp/mini_strace_test_getdents.c
+out=$($STRACE /tmp/mini_strace_test_getdents 2>&1)
+check_contains "getdents64 decodes a regular file's name and type" \
+    'getdents64\(.*d_name="regularfile.txt", d_type=DT_REG' "$out"
+check_contains "getdents64 decodes a symlink's type" \
+    'getdents64\(.*d_name="symlinkfile", d_type=DT_LNK' "$out"
+check_contains "getdents64's final (no more entries) call falls back to raw hex, not garbage" \
+    'getdents64\(0x[0-9a-f]+, 0x[0-9a-f]+, 0x[0-9a-f]+\) = 0' "$out"
+
+mkdir -p /tmp/mini_strace_test_bigdir
+for i in $(seq 1 20); do : > /tmp/mini_strace_test_bigdir/f$i.txt; done
+cat >/tmp/mini_strace_test_getdents_big.c <<'EOF'
+#include <sys/types.h>
+#include <dirent.h>
+#include <stddef.h>
+
+int main(void) {
+    DIR *d = opendir("/tmp/mini_strace_test_bigdir");
+    while (readdir(d) != NULL) {}
+    closedir(d);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_getdents_big /tmp/mini_strace_test_getdents_big.c
+out=$($STRACE /tmp/mini_strace_test_getdents_big 2>&1)
+check_contains "getdents64 caps the number of displayed entries with an ellipsis for large directories" \
+    'getdents64\(.*, \.\.\.\]' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

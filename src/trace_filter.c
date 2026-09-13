@@ -13,6 +13,7 @@ static const char *file_syscalls[] = {
     "readlink", "readlinkat", "statfs", "lseek", "getcwd", "creat",
     "symlink", "symlinkat", "link", "linkat", "mount", "umount2",
     "chroot", "pivot_root", "utime", "utimes", "futimesat",
+    "getdents64",
     NULL,
 };
 

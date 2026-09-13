@@ -92,4 +92,9 @@ void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
  * meaningful after the syscall returns. */
 void format_stat_buf(pid_t pid, unsigned long long addr, char *out, size_t out_size);
 
+/* getdents64's output buffer of directory entries. Only meaningful
+ * after the syscall returns; ret is the actual byte count returned
+ * (the buffer's declared capacity is not how much of it is real). */
+void format_getdents_buf(pid_t pid, unsigned long long addr, long ret, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

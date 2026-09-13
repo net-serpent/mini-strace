@@ -431,6 +431,23 @@ unsigned char stat_buf_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds getdents64()'s output buffer, decoded via
+ * format_getdents_buf() in decoders.c. Like read()'s buffer, this
+ * is only populated once the syscall actually runs, so it's
+ * deferred to the exit-stop rather than dereferenced at entry. */
+static const string_arg_entry getdents_buf_arg_table[] = {
+    { "getdents64",  0x02 },  /* arg 1 */
+    { NULL,          0x00 },
+};
+
+unsigned char getdents_buf_arg_mask(const char *syscall) {
+    for (int i = 0; getdents_buf_arg_table[i].name != NULL; i++) {
+        if (strcmp(getdents_buf_arg_table[i].name, syscall) == 0)
+            return getdents_buf_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds clone()'s flags, decoded via
  * format_clone_flags() in decoders.c. Both x86-64 and aarch64 use
  * the same raw syscall argument order for clone (flags, stack,
