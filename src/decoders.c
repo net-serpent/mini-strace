@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <sys/mount.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -278,6 +279,58 @@ void format_map_flags(unsigned long long value, char *out, size_t out_size) {
             (remaining & map_flag_table[i].value) == map_flag_table[i].value) {
             oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", map_flag_table[i].name);
             remaining &= ~map_flag_table[i].value;
+        }
+    }
+    if ((oi == 0 || remaining != 0) && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+/* mount()'s flags argument — an OR-of-bits walk like mmap's flags
+ * above. MS_REMOUNT/MS_BIND/MS_MOVE/MS_SHARED/etc. are independent
+ * bits, not a mutually-exclusive enum, so a bind mount combined with
+ * read-only (MS_BIND|MS_RDONLY, a common pattern for exposing a
+ * directory read-only) decodes as both names together, same as any
+ * other flag combination in this file. Newer flags not in every
+ * glibc's <sys/mount.h> (MS_LAZYTIME) are guarded with #ifdef, same
+ * pattern as CLONE_PIDFD in clone_flag_table. */
+static const flag_entry mount_flag_table[] = {
+    { MS_RDONLY,      "MS_RDONLY" },
+    { MS_NOSUID,      "MS_NOSUID" },
+    { MS_NODEV,       "MS_NODEV" },
+    { MS_NOEXEC,      "MS_NOEXEC" },
+    { MS_SYNCHRONOUS, "MS_SYNCHRONOUS" },
+    { MS_REMOUNT,     "MS_REMOUNT" },
+    { MS_MANDLOCK,    "MS_MANDLOCK" },
+    { MS_DIRSYNC,     "MS_DIRSYNC" },
+    { MS_NOATIME,     "MS_NOATIME" },
+    { MS_NODIRATIME,  "MS_NODIRATIME" },
+    { MS_BIND,        "MS_BIND" },
+    { MS_MOVE,        "MS_MOVE" },
+    { MS_REC,         "MS_REC" },
+    { MS_SILENT,      "MS_SILENT" },
+    { MS_POSIXACL,    "MS_POSIXACL" },
+    { MS_UNBINDABLE,  "MS_UNBINDABLE" },
+    { MS_PRIVATE,     "MS_PRIVATE" },
+    { MS_SLAVE,       "MS_SLAVE" },
+    { MS_SHARED,      "MS_SHARED" },
+    { MS_RELATIME,    "MS_RELATIME" },
+    { MS_KERNMOUNT,   "MS_KERNMOUNT" },
+    { MS_I_VERSION,   "MS_I_VERSION" },
+    { MS_STRICTATIME, "MS_STRICTATIME" },
+#ifdef MS_LAZYTIME
+    { MS_LAZYTIME,    "MS_LAZYTIME" },
+#endif
+    { 0,              NULL },
+};
+
+void format_mount_flags(unsigned long long value, char *out, size_t out_size) {
+    unsigned long long remaining = value;
+    size_t oi = 0;
+    for (int i = 0; mount_flag_table[i].name != NULL && oi < out_size; i++) {
+        if (mount_flag_table[i].value != 0 &&
+            (remaining & mount_flag_table[i].value) == mount_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", mount_flag_table[i].name);
+            remaining &= ~mount_flag_table[i].value;
         }
     }
     if ((oi == 0 || remaining != 0) && oi < out_size)

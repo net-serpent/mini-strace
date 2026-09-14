@@ -52,6 +52,9 @@ unsigned char prot_flags_arg_mask(const char *syscall);
 /* mmap's flags. */
 unsigned char map_flags_arg_mask(const char *syscall);
 
+/* mount's flags. */
+unsigned char mount_flags_arg_mask(const char *syscall);
+
 /* socket/socketpair's domain. */
 unsigned char socket_domain_arg_mask(const char *syscall);
 

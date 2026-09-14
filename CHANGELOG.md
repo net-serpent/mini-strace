@@ -16,6 +16,7 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `mount`: flags (`MS_BIND|MS_RDONLY`, ...) instead of a raw number.
 - `getdents64`: the directory entries actually read (`d_ino`,
   `d_off`, `d_reclen`, `d_name`, `d_type` via the real `DT_*`
   macros) instead of a raw buffer pointer. Capped at 8 rendered

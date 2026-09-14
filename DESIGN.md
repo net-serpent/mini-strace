@@ -221,6 +221,24 @@ composite-flag or access-mode cases: `PROT_READ`/`PROT_WRITE`/
 the same way `open`'s access mode is, since "no bits matched" and
 "the value is legitimately zero" must print differently.
 
+## mount flags
+
+Another plain OR-of-matched-names walk, same shape as `mmap`'s
+`MAP_*` flags — `MS_BIND`/`MS_RDONLY`/`MS_REMOUNT`/etc. are
+independent bits, not a mutually exclusive enum, so real combinations
+like `MS_BIND|MS_RDONLY` (exposing a directory read-only via a bind
+mount, a common pattern) decode as both names together. `MS_LAZYTIME`
+is guarded with `#ifdef`, the same portability precaution
+`CLONE_PIDFD` gets in the `clone`/`clone3` section, for glibc
+versions whose `<sys/mount.h>` predates it.
+
+Verified with a real `mount(source, target, NULL, MS_BIND|MS_RDONLY,
+NULL)` call. The call itself fails with `EPERM` in this project's
+unprivileged dev container (no `CAP_SYS_ADMIN`), which doesn't
+matter for this decoder: the flags argument is populated by the
+caller before the syscall runs, so it decodes correctly regardless
+of whether the call actually succeeds.
+
 ## socket/socketpair domain and type
 
 Each is a single enum value, not bits to OR (a socket is never both

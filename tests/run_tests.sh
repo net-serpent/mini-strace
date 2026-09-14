@@ -654,6 +654,23 @@ out=$($STRACE /tmp/mini_strace_test_getdents_big 2>&1)
 check_contains "getdents64 caps the number of displayed entries with an ellipsis for large directories" \
     'getdents64\(.*, \.\.\.\]' "$out"
 
+echo "=== mount() flags decoding ==="
+cat >/tmp/mini_strace_test_mount.c <<'EOF'
+#include <sys/mount.h>
+
+int main(void) {
+    /* expected to fail with EPERM in an unprivileged container - the
+     * flags decode from the caller's argument regardless of whether
+     * the call actually succeeds */
+    mount("/tmp", "/mnt", NULL, MS_BIND | MS_RDONLY, NULL);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_mount /tmp/mini_strace_test_mount.c
+out=$($STRACE /tmp/mini_strace_test_mount 2>&1)
+check_contains "mount() decodes a combined MS_BIND|MS_RDONLY flags value" \
+    'mount\(.*(MS_BIND\|MS_RDONLY|MS_RDONLY\|MS_BIND)' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

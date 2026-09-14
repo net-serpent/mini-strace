@@ -41,6 +41,9 @@ void format_prot_flags(unsigned long long value, char *out, size_t out_size);
 /* mmap's flags argument. */
 void format_map_flags(unsigned long long value, char *out, size_t out_size);
 
+/* mount's flags argument. */
+void format_mount_flags(unsigned long long value, char *out, size_t out_size);
+
 /* socket/socketpair's domain argument. */
 void format_socket_domain(unsigned long long value, char *out, size_t out_size);
 

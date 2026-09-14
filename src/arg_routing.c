@@ -194,6 +194,24 @@ unsigned char map_flags_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds mount()'s flags, decoded via
+ * format_mount_flags() in decoders.c. Populated by the caller
+ * before the syscall runs, so this is dereferenced at the
+ * entry-stop like every other plain-value flag argument in this
+ * file, not deferred. */
+static const string_arg_entry mount_flags_arg_table[] = {
+    { "mount",  0x08 },  /* arg 3 */
+    { NULL,     0x00 },
+};
+
+unsigned char mount_flags_arg_mask(const char *syscall) {
+    for (int i = 0; mount_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(mount_flags_arg_table[i].name, syscall) == 0)
+            return mount_flags_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds socket()/socketpair()'s domain (arg 0) and
  * type (arg 1) — both syscalls share the same argument layout for
  * these two. */

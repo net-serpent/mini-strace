@@ -27,6 +27,7 @@ bare pointer or a raw number:
   `0x241`)
 - `mmap`/`mprotect`: protection/mapping flags (`PROT_READ|PROT_WRITE`,
   `MAP_PRIVATE|MAP_ANONYMOUS`)
+- `mount`: flags (`MS_BIND|MS_RDONLY`, ...) instead of a raw number
 - `socket`/`socketpair`: domain and type
   (`socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, 0x0)` instead of two
   bare hex numbers)

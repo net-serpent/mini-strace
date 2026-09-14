@@ -472,6 +472,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char open_flags_mask = open_flags_arg_mask(name);
                     unsigned char prot_flags_mask = prot_flags_arg_mask(name);
                     unsigned char map_flags_mask = map_flags_arg_mask(name);
+                    unsigned char mount_flags_mask = mount_flags_arg_mask(name);
                     unsigned char socket_domain_mask = socket_domain_arg_mask(name);
                     unsigned char socket_type_mask = socket_type_arg_mask(name);
                     unsigned char signal_mask = signal_arg_mask(name);
@@ -500,6 +501,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_prot_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (map_flags_mask & (1 << i))
                             format_map_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (mount_flags_mask & (1 << i))
+                            format_mount_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (socket_domain_mask & (1 << i))
                             format_socket_domain(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (socket_type_mask & (1 << i))
