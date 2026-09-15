@@ -16,6 +16,14 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `rt_sigaction`: the signal being configured by name, and the
+  `struct sigaction` itself — `sa_handler` (`SIG_DFL`/`SIG_IGN` or a
+  hex address), `sa_flags`, and `sa_mask` (blocked signals by name)
+  — instead of raw pointers. Uses the kernel's actual on-the-wire
+  struct layout, verified empirically against real syscalls on both
+  x86-64 and aarch64, since glibc's own userspace `struct sigaction`
+  is a different, incompatible layout the libc wrapper translates
+  from before ever reaching the kernel.
 - `mount`: flags (`MS_BIND|MS_RDONLY`, ...) instead of a raw number.
 - `getdents64`: the directory entries actually read (`d_ino`,
   `d_off`, `d_reclen`, `d_name`, `d_type` via the real `DT_*`

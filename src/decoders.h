@@ -100,4 +100,10 @@ void format_stat_buf(pid_t pid, unsigned long long addr, char *out, size_t out_s
  * (the buffer's declared capacity is not how much of it is real). */
 void format_getdents_buf(pid_t pid, unsigned long long addr, long ret, char *out, size_t out_size);
 
+/* rt_sigaction's act/oldact struct sigaction — sa_handler (or
+ * SIG_DFL/SIG_IGN), sa_flags, sa_mask. Note this is the kernel's
+ * raw-syscall layout, not glibc's userspace struct sigaction —
+ * see decoders.c for why those differ. */
+void format_sigaction(pid_t pid, unsigned long long addr, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

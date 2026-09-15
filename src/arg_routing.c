@@ -244,12 +244,16 @@ unsigned char socket_type_arg_mask(const char *syscall) {
 }
 
 /* Which argument holds kill()/tkill()/tgkill()'s target signal
- * number, decoded via format_signal_arg() (decoders.c). */
+ * number, or rt_sigaction()'s signal being configured, decoded via
+ * format_signal_arg() (decoders.c). rt_sigaction's sig is never the
+ * null signal in practice, but there's no need for a special case:
+ * format_signal_arg() already treats 0 as its own real value. */
 static const string_arg_entry signal_arg_table[] = {
-    { "kill",    0x02 },  /* arg 1 */
-    { "tkill",   0x02 },  /* arg 1 */
-    { "tgkill",  0x04 },  /* arg 2 */
-    { NULL,      0x00 },
+    { "kill",          0x02 },  /* arg 1 */
+    { "tkill",         0x02 },  /* arg 1 */
+    { "tgkill",        0x04 },  /* arg 2 */
+    { "rt_sigaction",  0x01 },  /* arg 0 */
+    { NULL,            0x00 },
 };
 
 unsigned char signal_arg_mask(const char *syscall) {
@@ -555,6 +559,41 @@ unsigned char msghdr_recv_arg_mask(const char *syscall) {
     for (int i = 0; msghdr_recv_arg_table[i].name != NULL; i++) {
         if (strcmp(msghdr_recv_arg_table[i].name, syscall) == 0)
             return msghdr_recv_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds rt_sigaction()'s new struct sigaction (act),
+ * decoded via format_sigaction() in decoders.c. Populated by the
+ * caller before the syscall runs, so this is dereferenced at the
+ * entry-stop like clone3's clone_args, not deferred. */
+static const string_arg_entry sigaction_new_arg_table[] = {
+    { "rt_sigaction",  0x02 },  /* arg 1 */
+    { NULL,            0x00 },
+};
+
+unsigned char sigaction_new_arg_mask(const char *syscall) {
+    for (int i = 0; sigaction_new_arg_table[i].name != NULL; i++) {
+        if (strcmp(sigaction_new_arg_table[i].name, syscall) == 0)
+            return sigaction_new_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds rt_sigaction()'s old struct sigaction
+ * (oldact). Unlike act, this is only filled in by the kernel once
+ * the syscall returns, so it's deferred to the exit-stop the same
+ * way stat_buf_arg_mask/getdents_buf_arg_mask are, not dereferenced
+ * here. */
+static const string_arg_entry sigaction_old_arg_table[] = {
+    { "rt_sigaction",  0x04 },  /* arg 2 */
+    { NULL,            0x00 },
+};
+
+unsigned char sigaction_old_arg_mask(const char *syscall) {
+    for (int i = 0; sigaction_old_arg_table[i].name != NULL; i++) {
+        if (strcmp(sigaction_old_arg_table[i].name, syscall) == 0)
+            return sigaction_old_arg_table[i].str_args;
     }
     return 0;
 }

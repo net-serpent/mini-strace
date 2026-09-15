@@ -61,7 +61,8 @@ unsigned char socket_domain_arg_mask(const char *syscall);
 /* socket/socketpair's type. */
 unsigned char socket_type_arg_mask(const char *syscall);
 
-/* kill/tkill/tgkill's target signal number. */
+/* kill/tkill/tgkill's target signal number, or rt_sigaction's
+ * signal being configured. */
 unsigned char signal_arg_mask(const char *syscall);
 
 /* lseek's whence. */
@@ -105,6 +106,14 @@ unsigned char msghdr_send_arg_mask(const char *syscall);
 /* recvmsg's struct msghdr* (deferred to the exit-stop — see
  * mini_strace.c). */
 unsigned char msghdr_recv_arg_mask(const char *syscall);
+
+/* rt_sigaction's new struct sigaction (act) — already populated at
+ * the entry-stop. */
+unsigned char sigaction_new_arg_mask(const char *syscall);
+
+/* rt_sigaction's old struct sigaction (oldact), deferred to the
+ * exit-stop — see mini_strace.c. */
+unsigned char sigaction_old_arg_mask(const char *syscall);
 
 /* write's buffer + length — already populated at the entry-stop. */
 const buffer_arg_entry *buffer_arg_lookup(const char *syscall);

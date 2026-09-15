@@ -671,6 +671,48 @@ out=$($STRACE /tmp/mini_strace_test_mount 2>&1)
 check_contains "mount() decodes a combined MS_BIND|MS_RDONLY flags value" \
     'mount\(.*(MS_BIND\|MS_RDONLY|MS_RDONLY\|MS_BIND)' "$out"
 
+echo "=== rt_sigaction struct sigaction decoding ==="
+cat >/tmp/mini_strace_test_sigaction.c <<'EOF'
+#include <signal.h>
+#include <string.h>
+
+void handler(int sig) { (void)sig; }
+
+int main(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+
+    sa.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &sa, NULL);
+
+    sa.sa_handler = handler;
+    sa.sa_flags = SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    sigaddset(&sa.sa_mask, SIGUSR1);
+    sigaddset(&sa.sa_mask, SIGTERM);
+    struct sigaction old;
+    sigaction(SIGUSR2, &sa, &old);
+
+    sigaction(SIGUSR2, NULL, &old);
+
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_sigaction /tmp/mini_strace_test_sigaction.c
+out=$($STRACE /tmp/mini_strace_test_sigaction 2>&1)
+check_contains "rt_sigaction decodes its signal number argument by name" \
+    'rt_sigaction\(SIGUSR2,' "$out"
+check_contains "rt_sigaction decodes SIG_IGN instead of a raw handler value" \
+    'rt_sigaction\(SIGPIPE, \{sa_handler=SIG_IGN' "$out"
+check_contains "rt_sigaction decodes a real handler as a hex address" \
+    'sa_handler=0x[0-9a-f]+, sa_flags=SA_RESTART' "$out"
+check_contains "rt_sigaction decodes the blocked-signal mask by name" \
+    'sa_mask=\[SIGUSR1 SIGTERM\]' "$out"
+check_contains "rt_sigaction's oldact is NULL when the caller doesn't request it" \
+    'rt_sigaction\(SIGPIPE, \{sa_handler=SIG_IGN.*\}, NULL,' "$out"
+check_contains "rt_sigaction's deferred oldact decodes the previously-installed handler" \
+    'rt_sigaction\(SIGUSR2, NULL, \{sa_handler=0x[0-9a-f]+, sa_flags=SA_RESTART, sa_mask=\[SIGUSR1 SIGTERM\]\}' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

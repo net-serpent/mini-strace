@@ -111,6 +111,7 @@ typedef struct {
     int pending_msghdr_idx;       /* -1 = none; which arg is recvmsg's struct msghdr* */
     int pending_stat_idx;         /* -1 = none; which arg is the stat-family's struct stat* */
     int pending_getdents_idx;     /* -1 = none; which arg is getdents64's output buffer */
+    int pending_sigaction_idx;    /* -1 = none; which arg is rt_sigaction's oldact */
     int suppressed;
     struct timespec entry_time;  /* when this syscall's entry-stop fired, for -T/-c */
     const char *current_name;    /* syscall in flight, for -c's per-name accounting */
@@ -416,6 +417,14 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     break;
                 }
             }
+            unsigned char sigaction_old_mask = sigaction_old_arg_mask(name);
+            int sigaction_old_idx = -1;
+            for (int i = 0; i < 6; i++) {
+                if (sigaction_old_mask & (1 << i)) {
+                    sigaction_old_idx = i;
+                    break;
+                }
+            }
 
             if (show_timing || summary_mode)
                 clock_gettime(CLOCK_MONOTONIC, &ts->entry_time);
@@ -434,19 +443,21 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_msghdr_idx = -1;
                 ts->pending_stat_idx = -1;
                 ts->pending_getdents_idx = -1;
+                ts->pending_sigaction_idx = -1;
             } else if (read_entry != NULL || accept_entry != NULL || wait_status_idx >= 0 ||
-                       msghdr_recv_idx >= 0 || stat_buf_idx >= 0 || getdents_buf_idx >= 0) {
+                       msghdr_recv_idx >= 0 || stat_buf_idx >= 0 || getdents_buf_idx >= 0 ||
+                       sigaction_old_idx >= 0) {
                 /* read()-family, accept/getsockname/getpeername-family,
-                 * wait4, recvmsg, the stat family, and/or getdents64:
-                 * their buffer/sockaddr/wstatus/msghdr/struct stat/
-                 * dirent buffer is unpopulated until the syscall
-                 * actually runs, so there's nothing useful to
-                 * dereference yet — stash everything and build the
-                 * whole line at the exit-stop instead. More than one
-                 * can apply to the same call (recvfrom has a deferred
-                 * data buffer *and* a deferred sockaddr); the exit-stop
-                 * print below handles any combination, or none, being
-                 * set. */
+                 * wait4, recvmsg, the stat family, getdents64, and/or
+                 * rt_sigaction's oldact: their buffer/sockaddr/wstatus/
+                 * msghdr/struct stat/dirent buffer/struct sigaction is
+                 * unpopulated until the syscall actually runs, so
+                 * there's nothing useful to dereference yet — stash
+                 * everything and build the whole line at the exit-stop
+                 * instead. More than one can apply to the same call
+                 * (recvfrom has a deferred data buffer *and* a deferred
+                 * sockaddr); the exit-stop print below handles any
+                 * combination, or none, being set. */
                 ts->pending_name = name;
                 memcpy(ts->pending_args, raw_args, sizeof(raw_args));
                 ts->pending_read_entry = read_entry;
@@ -455,6 +466,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_msghdr_idx = msghdr_recv_idx;
                 ts->pending_stat_idx = stat_buf_idx;
                 ts->pending_getdents_idx = getdents_buf_idx;
+                ts->pending_sigaction_idx = sigaction_old_idx;
             } else {
                 /* everything else prints immediately, same as before:
                  * known path-string args get dereferenced, write()'s
@@ -466,6 +478,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_msghdr_idx = -1;
                 ts->pending_stat_idx = -1;
                 ts->pending_getdents_idx = -1;
+                ts->pending_sigaction_idx = -1;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
@@ -555,19 +568,20 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
             } else {
                 if (ts->pending_read_entry != NULL || ts->pending_sockaddr_entry != NULL ||
                     ts->pending_wait_status_idx >= 0 || ts->pending_msghdr_idx >= 0 ||
-                    ts->pending_stat_idx >= 0 || ts->pending_getdents_idx >= 0) {
+                    ts->pending_stat_idx >= 0 || ts->pending_getdents_idx >= 0 ||
+                    ts->pending_sigaction_idx >= 0) {
                     /* deferred print: build the whole "name(args) = ret"
                      * line now that the return value (and anything the
-                     * kernel filled in) is available. Any of the six
+                     * kernel filled in) is available. Any of the seven
                      * pending fields can be set alone (read()-family,
                      * accept/getsockname/getpeername-family, wait4,
-                     * recvmsg, the stat family, or getdents64) or
-                     * combined (recvfrom: a deferred data buffer *and*
-                     * a deferred sockaddr in the same call) — each
-                     * claims its own argument slot, so there's no
-                     * conflict rendering them into the same line.
-                     * Skipped entirely under -c, which never prints
-                     * per-call lines. */
+                     * recvmsg, the stat family, getdents64, or
+                     * rt_sigaction's oldact) or combined (recvfrom: a
+                     * deferred data buffer *and* a deferred sockaddr in
+                     * the same call) — each claims its own argument
+                     * slot, so there's no conflict rendering them into
+                     * the same line. Skipped entirely under -c, which
+                     * never prints per-call lines. */
                     if (!summary_mode) {
                         unsigned char fd_mask = show_fd_paths ? fd_arg_mask(ts->pending_name) : 0;
                         /* path-string arguments (the stat family's path,
@@ -579,6 +593,18 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                          * the entry-stop, just deferred alongside
                          * whatever else this call needs deferred. */
                         unsigned char str_mask = string_arg_mask(ts->pending_name);
+                        /* rt_sigaction's sig and act arguments are also
+                         * both already populated before the syscall
+                         * runs (only oldact needs deferring), but since
+                         * this whole call is routed through the
+                         * deferred path whenever oldact is requested —
+                         * routing is keyed on syscall name, not on
+                         * whether oldact happens to be NULL for this
+                         * particular call — sig/act would otherwise
+                         * never reach the entry-stop's own decode
+                         * logic. Same reasoning as str_mask above. */
+                        unsigned char signal_mask = signal_arg_mask(ts->pending_name);
+                        unsigned char sigaction_new_mask = sigaction_new_arg_mask(ts->pending_name);
 
                         /* the socklen_t the kernel wrote the real
                          * sockaddr size into is itself only valid now,
@@ -600,6 +626,10 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                         for (int i = 0; i < 6; i++) {
                             if (str_mask & (1 << i))
                                 read_child_string(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (signal_mask & (1 << i))
+                                format_signal_arg(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (sigaction_new_mask & (1 << i))
+                                format_sigaction(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_read_entry != NULL &&
                                 i == ts->pending_read_entry->buf_idx && ret > 0)
                                 read_child_buffer(wpid, ts->pending_args[i], (unsigned long long)ret,
@@ -615,6 +645,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_stat_buf(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_getdents_idx == i)
                                 format_getdents_buf(wpid, ts->pending_args[i], ret, argbuf[i], sizeof(argbuf[i]));
+                            else if (ts->pending_sigaction_idx == i && ret >= 0)
+                                format_sigaction(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else
                                 format_hex_or_fd_arg(wpid, ts->pending_args[i], fd_mask & (1 << i),
                                                       argbuf[i], sizeof(argbuf[i]));
@@ -627,6 +659,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     ts->pending_msghdr_idx = -1;
                     ts->pending_stat_idx = -1;
                     ts->pending_getdents_idx = -1;
+                    ts->pending_sigaction_idx = -1;
                 }
 
                 double elapsed = 0.0;

@@ -255,7 +255,11 @@ Reuses `sigabbrev_np()`, already used to name a signal being
 delivered to the tracee, for the opposite purpose: naming the
 signal about to be sent. Signal `0` is special-cased ahead of the
 lookup: it is a real value (a "can I signal this pid" existence
-check that sends nothing), not a signal name.
+check that sends nothing), not a signal name. `rt_sigaction`'s
+first argument (which signal's disposition is being configured)
+reuses this same decoder — see "rt_sigaction struct sigaction"
+below for why it, unlike `kill`/`tkill`/`tgkill`, needs its decode
+dispatched from both the entry- and exit-stop.
 
 ## lseek whence
 
@@ -561,6 +565,92 @@ decode with the correct `d_type`, the final "no more entries" call
 (return value `0`) falls back to a raw pointer rather than an empty
 or garbage decode, and a 20-file directory confirms the entry-count
 cap triggers the `...` truncation marker.
+
+## rt_sigaction struct sigaction
+
+`rt_sigaction`'s `act`/`oldact` arguments are a `struct sigaction`
+pointer, and — unlike every struct this project decodes elsewhere —
+glibc's userspace `struct sigaction` (from `<signal.h>`) is *not*
+what the raw syscall actually reads or writes. `format_stat_buf()`
+and `format_msghdr()` can safely overlay glibc's own `struct stat`/
+`struct msghdr` onto a `read_child_raw()` copy because those types
+pass through to the kernel unchanged. `struct sigaction` doesn't:
+glibc's `sigaction()` wrapper *translates* between its own userspace
+layout (a handler, a 128-byte `sa_mask` sized for up to 1024 signals,
+then `sa_flags`, then `sa_restorer`) and a smaller kernel-side layout
+in a different field order, before ever calling the raw syscall.
+Overlaying glibc's type here would silently read the wrong bytes
+into the wrong fields — a real correctness bug, not a safe
+degradation to hex.
+
+The kernel's actual on-the-wire layout isn't taken from documentation
+alone: it was verified empirically for this project, since getting a
+struct layout wrong here would look like a working decoder while
+quietly showing incorrect values. The verification made a raw
+`syscall(SYS_rt_sigaction, ...)` call with a hand-built struct in a
+hypothesized field order, immediately followed by a second raw call
+requesting the same disposition back via `oldact`, and confirmed
+every field round-tripped correctly — handler, flags, restorer, and
+mask all matched what was set. This was run on both architectures
+this project targets (a real aarch64 machine, and x86-64 via both a
+GitHub Actions runner and local QEMU emulation, all three agreeing),
+not assumed to be identical across them. The confirmed layout is
+four consecutive 8-byte fields:
+
+```c
+struct kernel_sigaction {
+    unsigned long handler;
+    unsigned long flags;
+    unsigned long restorer;
+    unsigned long mask;    /* one word — 64 signals, matching the
+                             * sigsetsize every real call here uses */
+};
+```
+
+This is a struct the project defines itself, not exposed by any
+glibc or kernel header under this shape — the same situation as
+`clone3`'s `struct clone_args` and `getdents64`'s
+`struct linux_dirent64`, both also kernel-only wire formats with no
+userspace declaration to borrow. Its fields are named `handler`/
+`flags`/`restorer`/`mask` rather than the POSIX `sa_*` names on
+purpose: glibc's `<bits/sigaction.h>` `#define`s `sa_handler` (and
+similarly for the others) as macros implementing its own union trick
+for supporting both a plain handler and a `sa_sigaction` callback
+through the same field — with `_GNU_SOURCE` already active, those
+macros are live in this file too, and naming a field `sa_handler`
+here would have the preprocessor silently rewrite it into a
+reference to a member this struct doesn't have. (This surfaced as a
+real compile error the first time — `'struct kernel_sigaction' has
+no member named '__sigaction_handler'` — which is what caught it.)
+
+`sa_handler` decodes `SIG_DFL`/`SIG_IGN` by name (both real macros,
+`(void *)0`/`(void *)1`) and falls back to a bare hex address
+otherwise — resolving that address to a symbol name would need debug
+info this project doesn't parse. `sa_flags` is the usual OR-of-bits
+walk every other flags argument in this file uses; `sa_mask` renders
+as a bracketed list of blocked signal names (`[SIGUSR1 SIGTERM]`,
+`[]` when empty) via the same `sigabbrev_np()` already used for
+`kill`'s target signal.
+
+Like the stat family, `act` is populated by the caller before the
+syscall runs (entry-stop, same category as `clone3`'s `clone_args`)
+while `oldact` is only filled in by the kernel afterward (exit-stop,
+same category as `stat_buf`). Since routing is keyed on syscall
+name rather than on whether a particular call's `oldact` happens to
+be `NULL`, *every* `rt_sigaction` call goes through the deferred
+path — which meant `sig` (the signal number) and `act` also needed
+their decode dispatch added to the exit-stop's per-argument loop,
+not just the entry-stop's, or they'd never be reached at all for
+this syscall. Same lesson as `string_arg_mask` needing to be added
+there for the stat family's path argument.
+
+Verified against a real signal handler installed via glibc's
+`sigaction()`: `SIG_IGN` decodes for a handler explicitly ignored,
+a real function pointer decodes as a hex address, `SA_RESTART`
+decodes in `sa_flags`, a mask blocking `SIGUSR1`/`SIGTERM` decodes
+by name, an omitted `oldact` shows `NULL`, and a follow-up call
+requesting the previously-installed disposition back via `oldact`
+decodes that deferred struct correctly too.
 
 ## Testing
 

@@ -1162,3 +1162,142 @@ void format_getdents_buf(pid_t pid, unsigned long long addr, long ret, char *out
     if (oi < out_size)
         snprintf(out + oi, out_size - oi, "]");
 }
+
+/* rt_sigaction()'s act/oldact struct sigaction arguments. glibc's
+ * userspace struct sigaction (from <signal.h>) is NOT what the raw
+ * syscall actually reads or writes: glibc's sigaction() wrapper
+ * translates between its own struct — sa_handler, then a 128-byte
+ * sa_mask (16 unsigned longs, room for 1024 signals), then sa_flags,
+ * then sa_restorer — and the kernel's actual on-the-wire layout,
+ * which is smaller and in a different field order. Overlaying
+ * glibc's type onto a read_child_raw() copy the way format_stat_buf()
+ * safely does for struct stat would silently read the wrong bytes
+ * into the wrong fields here — struct stat has no such translation
+ * layer, struct sigaction does.
+ *
+ * The kernel's real layout (verified empirically for this project:
+ * a raw syscall(SYS_rt_sigaction, ...) call using exactly this
+ * struct, followed immediately by a second call reading it back via
+ * oldact, round-trips every field correctly on both x86-64 and
+ * aarch64 — not taken from documentation alone) is four consecutive
+ * word-sized fields:
+ *
+ *   unsigned long sa_handler;   offset 0
+ *   unsigned long sa_flags;     offset 8
+ *   unsigned long sa_restorer;  offset 16
+ *   unsigned long sa_mask;      offset 24  (one word: sigsetsize is
+ *                                           8 on every real call this
+ *                                           project's syscalls see)
+ *
+ * This is a plain C struct this project defines itself (no glibc or
+ * kernel header exposes it under this shape), safe to overlay onto
+ * a read_child_raw() copy the same way struct stat/msghdr are:
+ * every field is an 8-byte-aligned unsigned long, so there's no
+ * compiler-inserted padding to worry about regardless of
+ * architecture.
+ *
+ * Field names deliberately avoid sa_handler/sa_flags/sa_mask:
+ * glibc's own <bits/sigaction.h> #defines those exact names as
+ * macros (sa_handler expands to a union member access, part of how
+ * glibc's *userspace* struct sigaction supports both a plain
+ * handler and a sa_sigaction callback through the same field), and
+ * with _GNU_SOURCE already pulling that header in, those macros are
+ * active here too — naming a field sa_handler would silently rewrite
+ * it to something that doesn't exist in this struct at all. */
+struct kernel_sigaction {
+    unsigned long handler;
+    unsigned long flags;
+    unsigned long restorer;
+    unsigned long mask;
+};
+
+/* sa_flags — a plain OR-of-bits walk like every other flags argument
+ * in this file. SA_RESTORER is glibc's own bookkeeping (it always
+ * sets this and supplies a real restorer trampoline) rather than
+ * something a caller chooses, but it's a real bit the kernel
+ * actually stores, so it's included rather than filtered out. */
+static const flag_entry sigaction_flag_table[] = {
+    { SA_NOCLDSTOP, "SA_NOCLDSTOP" },
+    { SA_NOCLDWAIT, "SA_NOCLDWAIT" },
+    { SA_SIGINFO,   "SA_SIGINFO" },
+    { SA_ONSTACK,   "SA_ONSTACK" },
+    { SA_RESTART,   "SA_RESTART" },
+    { SA_NODEFER,   "SA_NODEFER" },
+    { SA_RESETHAND, "SA_RESETHAND" },
+#ifdef SA_RESTORER
+    { SA_RESTORER,  "SA_RESTORER" },
+#endif
+    { 0,            NULL },
+};
+
+static void format_sigaction_flags_value(unsigned long flags, char *out, size_t out_size) {
+    if (flags == 0) {
+        snprintf(out, out_size, "0");
+        return;
+    }
+    unsigned long long remaining = flags;
+    size_t oi = 0;
+    for (int i = 0; sigaction_flag_table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & sigaction_flag_table[i].value) == sigaction_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", sigaction_flag_table[i].name);
+            remaining &= ~sigaction_flag_table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+/* sa_mask — which signals are blocked while the handler runs, shown
+ * as a bracketed list of names the way real strace shows a sigset,
+ * e.g. "[SIGINT SIGTERM]", "[]" when empty. One word (64 signals) is
+ * all this project ever reads, matching the fixed sigsetsize every
+ * real call here uses. */
+static void format_sigset_value(unsigned long mask, char *out, size_t out_size) {
+    size_t oi = (size_t)snprintf(out, out_size, "[");
+    int first = 1;
+    for (int sig = 1; sig <= 64 && oi < out_size; sig++) {
+        if (!(mask & (1ULL << (sig - 1))))
+            continue;
+        const char *abbrev = sigabbrev_np(sig);
+        if (abbrev != NULL)
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%sSIG%s", first ? "" : " ", abbrev);
+        else
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%d", first ? "" : " ", sig);
+        first = 0;
+    }
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, "]");
+}
+
+void format_sigaction(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    struct kernel_sigaction sa;
+    if (read_child_raw(pid, addr, (unsigned char *)&sa, sizeof(sa)) < sizeof(sa)) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    size_t oi = (size_t)snprintf(out, out_size, "{sa_handler=");
+    if (sa.handler == (unsigned long)SIG_DFL)
+        oi += (size_t)snprintf(out + oi, out_size - oi, "SIG_DFL");
+    else if (sa.handler == (unsigned long)SIG_IGN)
+        oi += (size_t)snprintf(out + oi, out_size - oi, "SIG_IGN");
+    else
+        oi += (size_t)snprintf(out + oi, out_size - oi, "0x%lx", sa.handler);
+
+    if (oi < out_size) {
+        char flagbuf[256];
+        format_sigaction_flags_value(sa.flags, flagbuf, sizeof(flagbuf));
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", sa_flags=%s", flagbuf);
+    }
+
+    if (oi < out_size) {
+        char maskbuf[512];
+        format_sigset_value(sa.mask, maskbuf, sizeof(maskbuf));
+        snprintf(out + oi, out_size - oi, ", sa_mask=%s}", maskbuf);
+    }
+}

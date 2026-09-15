@@ -57,6 +57,10 @@ bare pointer or a raw number:
 - `getdents64`: the directory entries actually read
   (`[{d_ino=1234, d_off=..., d_reclen=32, d_name="file.txt",
   d_type=DT_REG}, ...]`) instead of a raw buffer pointer
+- `rt_sigaction`: the signal being configured by name, and the
+  `struct sigaction` itself (`{sa_handler=0x..., sa_flags=SA_RESTART,
+  sa_mask=[SIGUSR1 SIGTERM]}`, or `SIG_DFL`/`SIG_IGN` in place of a
+  handler address) instead of raw pointers
 
 Narrow the trace with `-e trace=SET`, a comma-separated mix of
 categories (`file`, `network`, `process`) and/or exact syscall
