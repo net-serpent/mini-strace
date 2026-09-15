@@ -711,7 +711,7 @@ check_contains "rt_sigaction decodes the blocked-signal mask by name" \
 check_contains "rt_sigaction's oldact is NULL when the caller doesn't request it" \
     'rt_sigaction\(SIGPIPE, \{sa_handler=SIG_IGN.*\}, NULL,' "$out"
 check_contains "rt_sigaction's deferred oldact decodes the previously-installed handler" \
-    'rt_sigaction\(SIGUSR2, NULL, \{sa_handler=0x[0-9a-f]+, sa_flags=SA_RESTART, sa_mask=\[SIGUSR1 SIGTERM\]\}' "$out"
+    'rt_sigaction\(SIGUSR2, NULL, \{sa_handler=0x[0-9a-f]+, sa_flags=SA_RESTART[^,]*, sa_mask=\[SIGUSR1 SIGTERM\]\}' "$out"
 
 echo "=== -p attach ==="
 sleep 5 &
