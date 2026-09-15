@@ -27,3 +27,49 @@ jobs:
 
       - name: Run property tests (ASan/UBSan)
         run: make property-test
+
+      - name: TEMP verify sigaction ABI
+        run: |
+          cat > /tmp/sigtest.c << 'EOF'
+          #define _GNU_SOURCE
+          #include <sys/syscall.h>
+          #include <unistd.h>
+          #include <stdio.h>
+          #include <string.h>
+
+          struct kernel_sigaction {
+              unsigned long sa_handler;
+              unsigned long sa_flags;
+              unsigned long sa_restorer;
+              unsigned long sa_mask;
+          };
+
+          void dummy_handler(int sig) { (void)sig; }
+
+          int main(void) {
+              struct kernel_sigaction act, oldact;
+              memset(&act, 0, sizeof(act));
+              memset(&oldact, 0xAA, sizeof(oldact));
+
+              act.sa_handler = (unsigned long)dummy_handler;
+              act.sa_flags = 0x10000000;
+              act.sa_restorer = 0;
+              act.sa_mask = 0x2;
+
+              long ret = syscall(SYS_rt_sigaction, 12, &act, NULL, 8);
+              printf("set ret=%ld\n", ret);
+
+              long ret2 = syscall(SYS_rt_sigaction, 12, NULL, &oldact, 8);
+              printf("get ret=%ld\n", ret2);
+              printf("handler: got=0x%lx want=0x%lx match=%d\n", oldact.sa_handler, act.sa_handler, oldact.sa_handler == act.sa_handler);
+              printf("flags:   got=0x%lx want=0x%lx match=%d\n", oldact.sa_flags, act.sa_flags, oldact.sa_flags == act.sa_flags);
+              printf("restorer:got=0x%lx want=0x%lx match=%d\n", oldact.sa_restorer, act.sa_restorer, oldact.sa_restorer == act.sa_restorer);
+              printf("mask:    got=0x%lx want=0x%lx match=%d\n", oldact.sa_mask, act.sa_mask, oldact.sa_mask == act.sa_mask);
+
+              return 0;
+          }
+          EOF
+          gcc -O0 -o /tmp/sigtest /tmp/sigtest.c
+          /tmp/sigtest
+          echo '--- via mini-strace ---'
+          ./mini-strace /tmp/sigtest 2>&1 | grep rt_sigaction
