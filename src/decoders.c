@@ -1301,3 +1301,27 @@ void format_sigaction(pid_t pid, unsigned long long addr, char *out, size_t out_
         snprintf(out + oi, out_size - oi, ", sa_mask=%s}", maskbuf);
     }
 }
+
+/* clock_gettime/clock_settime/nanosleep/clock_nanosleep's struct
+ * timespec arguments. Unlike struct sigaction above, there's no
+ * glibc-vs-kernel translation layer to worry about here: glibc's
+ * userspace struct timespec (<time.h>) is passed straight through
+ * to these syscalls unchanged, the same situation struct stat and
+ * struct msghdr are in, so overlaying it onto a read_child_raw()
+ * copy is safe without needing the kind of empirical ABI
+ * verification struct sigaction required. */
+void format_timespec(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    struct timespec ts;
+    if (read_child_raw(pid, addr, (unsigned char *)&ts, sizeof(ts)) < sizeof(ts)) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    snprintf(out, out_size, "{tv_sec=%lld, tv_nsec=%lld}",
+             (long long)ts.tv_sec, (long long)ts.tv_nsec);
+}

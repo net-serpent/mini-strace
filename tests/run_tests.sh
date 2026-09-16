@@ -713,6 +713,41 @@ check_contains "rt_sigaction's oldact is NULL when the caller doesn't request it
 check_contains "rt_sigaction's deferred oldact decodes the previously-installed handler" \
     'rt_sigaction\(SIGUSR2, NULL, \{sa_handler=0x[0-9a-f]+, sa_flags=SA_RESTART[^,]*, sa_mask=\[SIGUSR1 SIGTERM\]\}' "$out"
 
+echo "=== clock_gettime/clock_settime/nanosleep/clock_nanosleep struct timespec decoding ==="
+cat >/tmp/mini_strace_test_timespec.c <<'EOF'
+#define _GNU_SOURCE
+#include <time.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+int main(void) {
+    struct timespec ts;
+    syscall(SYS_clock_gettime, CLOCK_MONOTONIC, &ts);
+
+    struct timespec req = { .tv_sec = 0, .tv_nsec = 1000000 };
+    nanosleep(&req, NULL);
+
+    struct timespec req2 = { .tv_sec = 0, .tv_nsec = 500000 };
+    struct timespec rem2;
+    clock_nanosleep(CLOCK_MONOTONIC, 0, &req2, &rem2);
+
+    struct timespec newtime = { .tv_sec = 12345, .tv_nsec = 6789 };
+    clock_settime(CLOCK_REALTIME, &newtime);
+
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_timespec /tmp/mini_strace_test_timespec.c
+out=$($STRACE /tmp/mini_strace_test_timespec 2>&1)
+check_contains "clock_gettime decodes its clockid and kernel-populated output timespec" \
+    'clock_gettime\(CLOCK_MONOTONIC, \{tv_sec=[0-9]+, tv_nsec=[0-9]+\}\)' "$out"
+check_contains "nanosleep decodes its requested duration (as nanosleep or clock_nanosleep, architecture-dependent)" \
+    '(nanosleep|clock_nanosleep)\(.*tv_nsec=1000000' "$out"
+check_contains "clock_nanosleep decodes its clockid, requested duration, and remaining-time output" \
+    'clock_nanosleep\(CLOCK_MONOTONIC, 0x0, \{tv_sec=0, tv_nsec=500000\}, \{tv_sec=-?[0-9]+, tv_nsec=-?[0-9]+\}\)' "$out"
+check_contains "clock_settime decodes its clockid and requested time" \
+    'clock_settime\(CLOCK_REALTIME, \{tv_sec=12345, tv_nsec=6789\}\)' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

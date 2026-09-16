@@ -40,6 +40,9 @@ bare pointer or a raw number:
 - `access`/`faccessat`/`faccessat2`: `mode` (`R_OK|W_OK`, `F_OK`)
 - `clock_gettime`/`clock_settime`/`clock_getres`/`clock_nanosleep`:
   `clockid` (`CLOCK_REALTIME`/`CLOCK_MONOTONIC`, ...)
+- `clock_gettime`/`clock_settime`/`nanosleep`/`clock_nanosleep`: the
+  `struct timespec` itself (`{tv_sec=1234, tv_nsec=5678}`) instead of
+  a raw pointer
 - `clone`/`clone3`: flags (`CLONE_VM|CLONE_FS|CLONE_FILES|...`), with
   the exit signal shown alongside them (`|SIGCHLD`) instead of
   packed into an unlabeled low byte

@@ -652,6 +652,73 @@ by name, an omitted `oldact` shows `NULL`, and a follow-up call
 requesting the previously-installed disposition back via `oldact`
 decodes that deferred struct correctly too.
 
+## clock_gettime/clock_settime/nanosleep/clock_nanosleep struct timespec
+
+Unlike `struct sigaction`, `struct timespec` (`<time.h>`) has no
+glibc-vs-kernel translation layer — it's passed straight through to
+these syscalls unchanged, the same situation `struct stat`/
+`struct msghdr` are in, so `format_timespec()` safely overlays it
+onto a `read_child_raw()` copy without needing the empirical
+verification `struct sigaction` required.
+
+Which argument gets decoded, and when, splits the same way the stat
+family's does: `clock_settime`'s new time and `nanosleep`/
+`clock_nanosleep`'s requested duration are populated by the caller
+before the syscall runs (entry-stop, `timespec_in_arg_mask`);
+`clock_gettime`'s result and `nanosleep`/`clock_nanosleep`'s
+remaining time (meaningful only if the sleep was interrupted) are
+populated by the kernel afterward (exit-stop,
+`timespec_out_arg_mask`, via a new `pending_timespec_out_idx`).
+
+This surfaced two real bugs while wiring it up, both the same root
+cause and worth calling out because it's now happened three times
+across three different features (the stat family's path argument
+earlier, `rt_sigaction`'s `sig`/`act` before this): whenever a
+syscall's routing is decided by *name* rather than by which
+arguments a specific call actually uses, adding a new
+kernel-populated argument to a syscall that previously had none
+routes *every* call to that syscall through the deferred path —
+silently making any of that syscall's entry-populated arguments
+unreachable in the entry-stop's own dispatch chain, since it never
+runs for that syscall anymore.
+
+Both bugs were caught by testing against a real trace, not by
+reasoning about the code:
+
+1. `clockid_arg_mask` was only ever dispatched from the entry-stop.
+   `clock_gettime` (whose only argument besides `clockid` is its
+   kernel-populated result) and `clock_nanosleep` (which always has
+   a deferred remaining-time argument) never reach that dispatch —
+   both showed `clockid` as raw hex until `clockid_mask` was added
+   to the exit-stop's loop too.
+2. The exit-stop's *outer* condition — the one deciding whether the
+   deferred-print block runs *at all* — was missing
+   `pending_timespec_out_idx >= 0`. A syscall whose *only* pending
+   field is a deferred timespec (`nanosleep` has no stat/msghdr/
+   sigaction component) skipped the entire print, producing a bare
+   `= 0` with no syscall name or arguments at all — a much louder,
+   easier-to-notice failure than the first bug, which is what caught
+   it during manual verification.
+
+Testing this also confirmed something not previously observed in
+this project: aarch64 has no raw `nanosleep` syscall either (the
+same situation `access`/`vfork` are in) — glibc's `nanosleep()`
+there compiles down to `clock_nanosleep(CLOCK_REALTIME, 0, req,
+rem)`, so a trace on aarch64 shows `clock_nanosleep(...)` for code
+that called `nanosleep()`, while the same code on x86-64 shows
+`nanosleep(...)`. Both are correct; they're genuinely different
+syscalls depending on the architecture the trace actually ran on.
+
+Verified against `clock_gettime` via a raw `syscall(SYS_clock_gettime,
+...)` call (bypassing the VDSO glibc's own `clock_gettime()` usually
+serves this from, see the clockid section above), `nanosleep()`'s
+requested duration, an explicit `clock_nanosleep()` call decoding
+clockid plus both its request and remaining-time arguments, and
+`clock_settime()` decoding its clockid and requested time (the call
+itself fails with `EPERM` in this project's unprivileged dev
+container, which — same as `mount`'s flags — doesn't matter for
+decoding an already-populated argument).
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real

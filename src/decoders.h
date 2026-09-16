@@ -106,4 +106,9 @@ void format_getdents_buf(pid_t pid, unsigned long long addr, long ret, char *out
  * see decoders.c for why those differ. */
 void format_sigaction(pid_t pid, unsigned long long addr, char *out, size_t out_size);
 
+/* clock_gettime/clock_settime/nanosleep/clock_nanosleep's struct
+ * timespec arguments (both the caller-populated request and the
+ * kernel-populated output, depending on which argument this is). */
+void format_timespec(pid_t pid, unsigned long long addr, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

@@ -598,6 +598,45 @@ unsigned char sigaction_old_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds a struct timespec* that's already populated
+ * by the caller before the syscall runs (clock_settime's new time,
+ * nanosleep/clock_nanosleep's requested duration), decoded via
+ * format_timespec() in decoders.c. */
+static const string_arg_entry timespec_in_arg_table[] = {
+    { "clock_settime",    0x02 },  /* arg 1 */
+    { "nanosleep",        0x01 },  /* arg 0 (request) */
+    { "clock_nanosleep",  0x04 },  /* arg 2 (request) */
+    { NULL,               0x00 },
+};
+
+unsigned char timespec_in_arg_mask(const char *syscall) {
+    for (int i = 0; timespec_in_arg_table[i].name != NULL; i++) {
+        if (strcmp(timespec_in_arg_table[i].name, syscall) == 0)
+            return timespec_in_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds a struct timespec* only populated by the
+ * kernel once the syscall returns (clock_gettime's result;
+ * nanosleep/clock_nanosleep's remaining time, meaningful only if
+ * the sleep was interrupted). Deferred to the exit-stop like
+ * stat_buf_arg_mask, not dereferenced here. */
+static const string_arg_entry timespec_out_arg_table[] = {
+    { "clock_gettime",    0x02 },  /* arg 1 */
+    { "nanosleep",        0x02 },  /* arg 1 (remaining) */
+    { "clock_nanosleep",  0x08 },  /* arg 3 (remaining) */
+    { NULL,               0x00 },
+};
+
+unsigned char timespec_out_arg_mask(const char *syscall) {
+    for (int i = 0; timespec_out_arg_table[i].name != NULL; i++) {
+        if (strcmp(timespec_out_arg_table[i].name, syscall) == 0)
+            return timespec_out_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Syscalls whose output is a raw byte buffer that's only populated
  * *after* the syscall actually runs — read()'s buf is garbage/empty
  * at the entry-stop, so unlike write() this can't be dereferenced

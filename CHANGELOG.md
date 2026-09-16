@@ -16,6 +16,9 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `clock_gettime`/`clock_settime`/`nanosleep`/`clock_nanosleep`: the
+  `struct timespec` itself (`{tv_sec=1234, tv_nsec=5678}`) instead
+  of a raw pointer, alongside the already-decoded `clockid`.
 - `rt_sigaction`: the signal being configured by name, and the
   `struct sigaction` itself — `sa_handler` (`SIG_DFL`/`SIG_IGN` or a
   hex address), `sa_flags`, and `sa_mask` (blocked signals by name)

@@ -115,6 +115,14 @@ unsigned char sigaction_new_arg_mask(const char *syscall);
  * exit-stop — see mini_strace.c. */
 unsigned char sigaction_old_arg_mask(const char *syscall);
 
+/* clock_settime/nanosleep/clock_nanosleep's caller-populated struct
+ * timespec — already populated at the entry-stop. */
+unsigned char timespec_in_arg_mask(const char *syscall);
+
+/* clock_gettime/nanosleep/clock_nanosleep's kernel-populated struct
+ * timespec, deferred to the exit-stop — see mini_strace.c. */
+unsigned char timespec_out_arg_mask(const char *syscall);
+
 /* write's buffer + length — already populated at the entry-stop. */
 const buffer_arg_entry *buffer_arg_lookup(const char *syscall);
 
