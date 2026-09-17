@@ -16,6 +16,9 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `wait4`: the resulting `struct rusage` (`ru_utime`, `ru_stime`,
+  `ru_maxrss`) instead of a raw pointer, alongside the
+  already-decoded exit status.
 - `clock_gettime`/`clock_settime`/`nanosleep`/`clock_nanosleep`: the
   `struct timespec` itself (`{tv_sec=1234, tv_nsec=5678}`) instead
   of a raw pointer, alongside the already-decoded `clockid`.

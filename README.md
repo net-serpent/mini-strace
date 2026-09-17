@@ -57,6 +57,10 @@ bare pointer or a raw number:
 - `stat`/`lstat`/`fstat`/`newfstatat`: the resulting `struct stat`
   (`{st_mode=S_IFREG|0644, st_size=1234, st_nlink=1, st_uid=0,
   st_gid=0}`) instead of a raw pointer
+- `wait4`: exit status, decoded into the `WIFEXITED`/`WIFSIGNALED`/
+  `WIFSTOPPED` form real `strace` uses, and the resulting
+  `struct rusage` (`ru_utime`/`ru_stime`/`ru_maxrss`) instead of raw
+  pointers
 - `getdents64`: the directory entries actually read
   (`[{d_ino=1234, d_off=..., d_reclen=32, d_name="file.txt",
   d_type=DT_REG}, ...]`) instead of a raw buffer pointer

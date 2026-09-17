@@ -432,6 +432,23 @@ unsigned char wait_status_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds wait4's output struct rusage, decoded via
+ * format_rusage() in decoders.c. Only populated once the syscall
+ * actually returns, so like wait_status_arg_mask this is deferred
+ * to the exit-stop, not dereferenced here. */
+static const string_arg_entry rusage_arg_table[] = {
+    { "wait4", 0x08 },  /* arg 3 */
+    { NULL,    0x00 },
+};
+
+unsigned char rusage_arg_mask(const char *syscall) {
+    for (int i = 0; rusage_arg_table[i].name != NULL; i++) {
+        if (strcmp(rusage_arg_table[i].name, syscall) == 0)
+            return rusage_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds stat/lstat/fstat/newfstatat's output struct
  * stat, decoded via format_stat_buf() in decoders.c. Like wait4's
  * wstatus, this is only populated once the syscall actually returns,

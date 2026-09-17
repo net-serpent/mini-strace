@@ -748,6 +748,36 @@ check_contains "clock_nanosleep decodes its clockid, requested duration, and rem
 check_contains "clock_settime decodes its clockid and requested time" \
     'clock_settime\(CLOCK_REALTIME, \{tv_sec=12345, tv_nsec=6789\}\)' "$out"
 
+echo "=== wait4 struct rusage decoding ==="
+cat >/tmp/mini_strace_test_rusage.c <<'EOF'
+#define _GNU_SOURCE
+#include <sys/wait.h>
+#include <sys/resource.h>
+#include <unistd.h>
+
+int main(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        for (volatile long i = 0; i < 5000000; i++) {}
+        _exit(0);
+    }
+    int status;
+    struct rusage ru;
+    wait4(pid, &status, 0, &ru);
+
+    struct rusage ru2;
+    wait4(-1, &status, 0, &ru2);  /* no children left: ECHILD */
+
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_rusage /tmp/mini_strace_test_rusage.c
+out=$($STRACE -f /tmp/mini_strace_test_rusage 2>&1)
+check_contains "wait4 decodes ru_utime/ru_stime/ru_maxrss on a successful reap" \
+    'wait4\(.*ru_utime=\{tv_sec=[0-9]+, tv_usec=[0-9]+\}, ru_stime=\{tv_sec=[0-9]+, tv_usec=[0-9]+\}, ru_maxrss=[0-9]+\}\)' "$out"
+check_contains "wait4's rusage falls back to raw hex when the call fails (no children)" \
+    'wait4\([^{]*\) = -10 \(ECHILD\)' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

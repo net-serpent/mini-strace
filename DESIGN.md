@@ -719,6 +719,45 @@ itself fails with `EPERM` in this project's unprivileged dev
 container, which — same as `mount`'s flags — doesn't matter for
 decoding an already-populated argument).
 
+## wait4 struct rusage
+
+Like `struct stat`/`struct timespec`, `struct rusage`
+(`<sys/resource.h>`) has no glibc-vs-kernel translation layer —
+`wait4`'s kernel-populated `rusage` output is the same type glibc
+itself declares, so `format_rusage()` overlays it onto a
+`read_child_raw()` copy the same safe way, no empirical ABI check
+needed the way `struct sigaction` required.
+
+Only `ru_utime`/`ru_stime` (CPU time actually used) and `ru_maxrss`
+(peak memory) are decoded — the fields most worth seeing at a
+glance, same call this project already made for `struct stat`'s
+subset of fields. The other dozen-odd counters `struct rusage`
+carries (page faults, swaps, IPC messages sent/received, context
+switches, ...) are rarely examined and would mostly add noise.
+
+Unlike every other deferred-argument addition so far, this one
+needed no new entry-vs-exit split to get right: `wait4` was already
+always routed through the deferred path before this (its `wstatus`
+argument has always required it), so adding `rusage` as a second
+deferred field on the same call was just a matter of extending the
+existing pending-state machinery — `pending_rusage_idx` alongside
+`pending_wait_status_idx`, both populated only once the syscall
+returns — with no risk of the "syscall's other arguments silently
+become unreachable" bug that hit the stat family's path,
+`rt_sigaction`'s `sig`/`act`, and `clock_gettime`/`clock_nanosleep`'s
+`clockid` before this.
+
+Gated on `ret >= 0`, matching `format_stat_buf`'s convention: a
+failed `wait4` (no child to reap, `ECHILD`) never has the kernel
+touch `rusage` at all, so decoding it would be showing whatever
+garbage happened to already be in that memory, not real data.
+
+Verified against a real reaped child (`ru_utime`/`ru_stime`/
+`ru_maxrss` all show plausible values) and a `wait4(-1, ...)` call
+with no children left, which fails with `ECHILD` and correctly
+leaves both `wstatus` and `rusage` as raw pointers rather than
+decoding either.
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real

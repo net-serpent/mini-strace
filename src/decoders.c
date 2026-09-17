@@ -19,6 +19,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <sys/mount.h>
+#include <sys/resource.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -1324,4 +1325,36 @@ void format_timespec(pid_t pid, unsigned long long addr, char *out, size_t out_s
 
     snprintf(out, out_size, "{tv_sec=%lld, tv_nsec=%lld}",
              (long long)ts.tv_sec, (long long)ts.tv_nsec);
+}
+
+/* wait4's output struct rusage, only meaningful *after* the syscall
+ * returns (deferred to the exit-stop, like wstatus in the same
+ * call). Like struct stat/timespec, and unlike struct sigaction,
+ * there's no glibc-vs-kernel translation for struct rusage — it's
+ * passed straight through unchanged — so overlaying glibc's own
+ * type (<sys/resource.h>) onto a read_child_raw() copy is safe.
+ *
+ * Only ru_utime/ru_stime (CPU time actually used) and ru_maxrss
+ * (peak memory) are decoded — the fields most worth seeing at a
+ * glance, the same call this project already made for struct stat.
+ * The other dozen-odd counters (page faults, swaps, IPC messages,
+ * context switches, ...) are rarely examined and would mostly add
+ * noise. */
+void format_rusage(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    struct rusage ru;
+    if (read_child_raw(pid, addr, (unsigned char *)&ru, sizeof(ru)) < sizeof(ru)) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    snprintf(out, out_size,
+             "{ru_utime={tv_sec=%lld, tv_usec=%lld}, ru_stime={tv_sec=%lld, tv_usec=%lld}, ru_maxrss=%ld}",
+             (long long)ru.ru_utime.tv_sec, (long long)ru.ru_utime.tv_usec,
+             (long long)ru.ru_stime.tv_sec, (long long)ru.ru_stime.tv_usec,
+             ru.ru_maxrss);
 }

@@ -111,4 +111,8 @@ void format_sigaction(pid_t pid, unsigned long long addr, char *out, size_t out_
  * kernel-populated output, depending on which argument this is). */
 void format_timespec(pid_t pid, unsigned long long addr, char *out, size_t out_size);
 
+/* wait4's output struct rusage — ru_utime, ru_stime, ru_maxrss. Only
+ * meaningful after the syscall returns. */
+void format_rusage(pid_t pid, unsigned long long addr, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */
