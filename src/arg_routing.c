@@ -449,6 +449,62 @@ unsigned char rusage_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds epoll_ctl()'s op, decoded via
+ * format_epoll_op() in decoders.c. */
+static const string_arg_entry epoll_op_arg_table[] = {
+    { "epoll_ctl", 0x02 },  /* arg 1 */
+    { NULL,        0x00 },
+};
+
+unsigned char epoll_op_arg_mask(const char *syscall) {
+    for (int i = 0; epoll_op_arg_table[i].name != NULL; i++) {
+        if (strcmp(epoll_op_arg_table[i].name, syscall) == 0)
+            return epoll_op_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds epoll_ctl()'s struct epoll_event*, decoded
+ * via format_epoll_event() in decoders.c. Populated by the caller
+ * before the syscall runs, so this is dereferenced at the
+ * entry-stop like clone3's clone_args, not deferred. */
+static const string_arg_entry epoll_event_arg_table[] = {
+    { "epoll_ctl", 0x08 },  /* arg 3 */
+    { NULL,        0x00 },
+};
+
+unsigned char epoll_event_arg_mask(const char *syscall) {
+    for (int i = 0; epoll_event_arg_table[i].name != NULL; i++) {
+        if (strcmp(epoll_event_arg_table[i].name, syscall) == 0)
+            return epoll_event_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds epoll_wait()'s output array of struct
+ * epoll_event, decoded via format_epoll_events_buf() in
+ * decoders.c. Only populated once the syscall actually returns, so
+ * like stat_buf_arg_mask this is deferred to the exit-stop, not
+ * dereferenced here. epoll_pwait is included at the same argument
+ * index: glibc's epoll_wait() compiles down to a call to the
+ * epoll_pwait syscall (with a NULL sigmask) rather than the
+ * epoll_wait syscall, the same kind of libc-wrapper-picks-a-
+ * different-syscall situation access()/faccessat() and
+ * nanosleep()/clock_nanosleep() are already in. */
+static const string_arg_entry epoll_events_arg_table[] = {
+    { "epoll_wait",  0x02 },  /* arg 1 */
+    { "epoll_pwait", 0x02 },  /* arg 1 */
+    { NULL,          0x00 },
+};
+
+unsigned char epoll_events_arg_mask(const char *syscall) {
+    for (int i = 0; epoll_events_arg_table[i].name != NULL; i++) {
+        if (strcmp(epoll_events_arg_table[i].name, syscall) == 0)
+            return epoll_events_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds stat/lstat/fstat/newfstatat's output struct
  * stat, decoded via format_stat_buf() in decoders.c. Like wait4's
  * wstatus, this is only populated once the syscall actually returns,
@@ -809,6 +865,9 @@ static const syscall_argc_entry syscall_argc_table[] = {
     { "sched_yield",    0 },
     { "madvise",        3 },
     { "poll",           3 },
+    { "epoll_ctl",      4 },
+    { "epoll_wait",     4 },
+    { "epoll_pwait",    6 },  /* epfd, events, maxevents, timeout, sigmask, sigsetsize */
     { "pipe",           1 },
     { "pipe2",          2 },
     { "getcwd",         2 },

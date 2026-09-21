@@ -16,6 +16,13 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `epoll_ctl`: `op` (`EPOLL_CTL_ADD`/`MOD`/`DEL`) and the
+  `struct epoll_event` (`events` flags, `data` shown as both `u32`
+  and `u64` since a trace can't know which the caller meant) instead
+  of a raw number and pointer.
+- `epoll_wait`/`epoll_pwait`: the array of ready events actually
+  returned instead of a raw buffer pointer, capped at 8 rendered
+  entries.
 - `wait4`: the resulting `struct rusage` (`ru_utime`, `ru_stime`,
   `ru_maxrss`) instead of a raw pointer, alongside the
   already-decoded exit status.

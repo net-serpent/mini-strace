@@ -758,6 +758,67 @@ with no children left, which fails with `ECHILD` and correctly
 leaves both `wstatus` and `rusage` as raw pointers rather than
 decoding either.
 
+## epoll_ctl/epoll_wait struct epoll_event
+
+`struct epoll_event` is another direct kernel passthrough, not a
+translated type the way `struct sigaction` is — but it has its own
+real architecture-specific wrinkle worth naming: on x86-64 the
+kernel's expected layout is `__attribute__((packed))` to 12 bytes
+(preserving a 32-bit-era ABI), while other architectures, aarch64
+included, use the natural 16-byte layout instead (confirmed by
+`sizeof(struct epoll_event)` in this project's own dev container).
+Glibc's own `<sys/epoll.h>` already declares the struct with
+whatever packing each architecture's kernel actually expects, so —
+same reasoning already relied on for `struct stat`'s layout
+differing across architectures — always using `sizeof(struct
+epoll_event)` rather than a hardcoded size means the correct size
+and array stride fall out automatically for whichever architecture
+this is built for, without needing `struct sigaction`'s kind of
+empirical ABI verification: there's no libc-wrapper-level
+translation happening here, just a struct definition that already
+accounts for the difference.
+
+`format_one_epoll_event()` decodes the shared shape both syscalls
+use: `events` (an OR-of-bits walk like every other flags argument in
+this file) and `data`, a union with no way to know from the trace
+alone which member (`fd`/`u32`/`u64`/`ptr`) the caller actually
+meant — so, matching what real `strace` does here, both integer
+interpretations (`u32` and `u64`) are shown rather than guessing
+one.
+
+`epoll_ctl`'s `op` (`EPOLL_CTL_ADD`/`MOD`/`DEL`) is a plain enum
+lookup like `fcntl`'s `cmd`. Its `event` argument is populated by
+the caller before the syscall runs (entry-stop, like `clone3`'s
+`clone_args`); `epoll_wait`'s output array is only populated by the
+kernel afterward (exit-stop, `format_epoll_events_buf()`, capped at
+8 rendered entries with a trailing `...` past that — same convention
+`format_getdents_buf()` and `format_msghdr()`'s iovec array use).
+`ret` is how many entries the kernel actually filled in, not
+`maxevents` (the buffer's declared capacity), the same relationship
+`getdents64`'s return value has to its buffer.
+
+Verifying this against a real trace surfaced the same
+architecture-vs-glibc-choice situation already documented for
+`access`/`faccessat` and `nanosleep`/`clock_nanosleep`: glibc's
+`epoll_wait()` compiles down to a call to the `epoll_pwait` syscall
+(with a `NULL` sigmask) rather than the `epoll_wait` syscall — so
+`epoll_events_arg_mask` and `syscall_argc_table` both cover
+`epoll_pwait` at the same argument index, and a trace of code that
+calls `epoll_wait()` shows `epoll_pwait(...)` instead. This isn't
+even architecture-specific the way `access`/`nanosleep` are: aarch64
+doesn't have a raw `epoll_wait` syscall number at all (`SYS_epoll_wait`
+doesn't exist as a macro there), while x86-64 does have one, but this
+project's dev-container glibc still prefers routing through
+`epoll_pwait` regardless.
+
+Verified against a real `epoll_create1()`/`epoll_ctl()`/`epoll_wait()`
+sequence: `EPOLL_CTL_ADD` with `EPOLLIN|EPOLLET` and a real fd decode
+correctly, `EPOLL_CTL_DEL` with a `NULL` event decodes correctly, a
+ready event appears in `epoll_wait`'s (actually `epoll_pwait`'s)
+output array with the right flags and fd, and a second call with
+nothing left registered times out with 0 ready events, correctly
+falling back to a raw pointer instead of an empty or garbage array.
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real

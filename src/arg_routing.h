@@ -87,6 +87,17 @@ unsigned char wait_status_arg_mask(const char *syscall);
  * mini_strace.c). */
 unsigned char rusage_arg_mask(const char *syscall);
 
+/* epoll_ctl's op. */
+unsigned char epoll_op_arg_mask(const char *syscall);
+
+/* epoll_ctl's struct epoll_event* — already populated at the
+ * entry-stop. */
+unsigned char epoll_event_arg_mask(const char *syscall);
+
+/* epoll_wait's output array of struct epoll_event (deferred to the
+ * exit-stop — see mini_strace.c). */
+unsigned char epoll_events_arg_mask(const char *syscall);
+
 /* stat/lstat/fstat/newfstatat's output struct stat (deferred to the
  * exit-stop — see mini_strace.c). */
 unsigned char stat_buf_arg_mask(const char *syscall);

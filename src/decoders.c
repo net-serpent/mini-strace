@@ -20,6 +20,7 @@
 #include <dirent.h>
 #include <sys/mount.h>
 #include <sys/resource.h>
+#include <sys/epoll.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -1357,4 +1358,139 @@ void format_rusage(pid_t pid, unsigned long long addr, char *out, size_t out_siz
              (long long)ru.ru_utime.tv_sec, (long long)ru.ru_utime.tv_usec,
              (long long)ru.ru_stime.tv_sec, (long long)ru.ru_stime.tv_usec,
              ru.ru_maxrss);
+}
+
+/* epoll_ctl()'s op argument — a plain enum lookup like fcntl's cmd,
+ * not bits to OR. */
+static const flag_entry epoll_op_table[] = {
+    { EPOLL_CTL_ADD, "EPOLL_CTL_ADD" },
+    { EPOLL_CTL_DEL, "EPOLL_CTL_DEL" },
+    { EPOLL_CTL_MOD, "EPOLL_CTL_MOD" },
+    { 0,             NULL },
+};
+
+void format_epoll_op(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; epoll_op_table[i].name != NULL; i++) {
+        if (epoll_op_table[i].value == value) {
+            snprintf(out, out_size, "%s", epoll_op_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
+/* epoll_ctl()'s event argument and epoll_wait()'s output array
+ * share this one struct epoll_event shape. Unlike struct sigaction,
+ * there's no glibc-wrapper translation between userspace and
+ * kernel here — struct epoll_event is a direct passthrough, and
+ * glibc's own <sys/epoll.h> already declares it with whatever
+ * packing each architecture's kernel ABI actually expects (x86-64's
+ * kernel ABI famously packs it to 12 bytes to preserve a 32-bit-era
+ * layout; other architectures, aarch64 included, use the natural
+ * 16-byte layout instead). Always using sizeof(struct epoll_event)
+ * rather than a hardcoded size means the correct stride for
+ * whichever architecture this is built for falls out automatically,
+ * the same reasoning already relied on for struct stat's layout
+ * differing across architectures.
+ *
+ * The data field is a union (fd/u32/u64/pointer) with no way to
+ * know from the trace alone which member the caller actually meant
+ * to use, so — matching what real strace does here — both integer
+ * interpretations are shown rather than guessing one. */
+static const flag_entry epoll_events_flag_table[] = {
+    { EPOLLIN,      "EPOLLIN" },
+    { EPOLLOUT,     "EPOLLOUT" },
+    { EPOLLPRI,     "EPOLLPRI" },
+    { EPOLLERR,     "EPOLLERR" },
+    { EPOLLHUP,     "EPOLLHUP" },
+    { EPOLLRDNORM,  "EPOLLRDNORM" },
+    { EPOLLRDBAND,  "EPOLLRDBAND" },
+    { EPOLLWRNORM,  "EPOLLWRNORM" },
+    { EPOLLWRBAND,  "EPOLLWRBAND" },
+    { EPOLLMSG,     "EPOLLMSG" },
+    { EPOLLRDHUP,   "EPOLLRDHUP" },
+#ifdef EPOLLEXCLUSIVE
+    { EPOLLEXCLUSIVE, "EPOLLEXCLUSIVE" },
+#endif
+#ifdef EPOLLWAKEUP
+    { EPOLLWAKEUP,  "EPOLLWAKEUP" },
+#endif
+    { EPOLLONESHOT, "EPOLLONESHOT" },
+    { EPOLLET,      "EPOLLET" },
+    { 0,            NULL },
+};
+
+static void format_epoll_events_value(uint32_t events, char *out, size_t out_size) {
+    if (events == 0) {
+        snprintf(out, out_size, "0");
+        return;
+    }
+    unsigned long long remaining = events;
+    size_t oi = 0;
+    for (int i = 0; epoll_events_flag_table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & epoll_events_flag_table[i].value) == epoll_events_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", epoll_events_flag_table[i].name);
+            remaining &= ~epoll_events_flag_table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+static void format_one_epoll_event(const struct epoll_event *ev, char *out, size_t out_size) {
+    char eventsbuf[256];
+    format_epoll_events_value(ev->events, eventsbuf, sizeof(eventsbuf));
+    snprintf(out, out_size, "{events=%s, data={u32=%u, u64=%llu}}",
+             eventsbuf, ev->data.u32, (unsigned long long)ev->data.u64);
+}
+
+void format_epoll_event(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    struct epoll_event ev;
+    if (read_child_raw(pid, addr, (unsigned char *)&ev, sizeof(ev)) < sizeof(ev)) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    format_one_epoll_event(&ev, out, out_size);
+}
+
+/* epoll_wait()'s output array of struct epoll_event, only
+ * meaningful *after* the syscall returns — ret is how many entries
+ * the kernel actually filled in, not maxevents (the buffer's
+ * declared capacity). Capped at 8 rendered entries, with a trailing
+ * "..." past that, the same convention format_getdents_buf() and
+ * format_msghdr()'s iovec array use. */
+#define EPOLL_EVENTS_MAX_ENTRIES 8
+
+void format_epoll_events_buf(pid_t pid, unsigned long long addr, long ret, char *out, size_t out_size) {
+    if (ret <= 0) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    size_t count = (size_t)ret;
+    int truncated = count > EPOLL_EVENTS_MAX_ENTRIES;
+    if (truncated)
+        count = EPOLL_EVENTS_MAX_ENTRIES;
+
+    size_t oi = (size_t)snprintf(out, out_size, "[");
+    for (size_t i = 0; i < count && oi < out_size; i++) {
+        struct epoll_event ev;
+        unsigned long long ev_addr = addr + i * sizeof(ev);
+        if (read_child_raw(pid, ev_addr, (unsigned char *)&ev, sizeof(ev)) < sizeof(ev))
+            break;
+
+        char evbuf[256];
+        format_one_epoll_event(&ev, evbuf, sizeof(evbuf));
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", i ? ", " : "", evbuf);
+    }
+    if (truncated && oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", ...");
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, "]");
 }

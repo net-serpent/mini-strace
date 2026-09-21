@@ -115,4 +115,15 @@ void format_timespec(pid_t pid, unsigned long long addr, char *out, size_t out_s
  * meaningful after the syscall returns. */
 void format_rusage(pid_t pid, unsigned long long addr, char *out, size_t out_size);
 
+/* epoll_ctl's op argument. */
+void format_epoll_op(unsigned long long value, char *out, size_t out_size);
+
+/* epoll_ctl's event argument — already populated at the entry-stop. */
+void format_epoll_event(pid_t pid, unsigned long long addr, char *out, size_t out_size);
+
+/* epoll_wait's output array of struct epoll_event. Only meaningful
+ * after the syscall returns; ret is the actual number of entries
+ * filled in (not maxevents, the buffer's declared capacity). */
+void format_epoll_events_buf(pid_t pid, unsigned long long addr, long ret, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

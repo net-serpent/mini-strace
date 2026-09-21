@@ -778,6 +778,45 @@ check_contains "wait4 decodes ru_utime/ru_stime/ru_maxrss on a successful reap" 
 check_contains "wait4's rusage falls back to raw hex when the call fails (no children)" \
     'wait4\([^{]*\) = -10 \(ECHILD\)' "$out"
 
+echo "=== epoll_ctl/epoll_wait struct epoll_event decoding ==="
+cat >/tmp/mini_strace_test_epoll.c <<'EOF'
+#include <sys/epoll.h>
+#include <unistd.h>
+
+int main(void) {
+    int epfd = epoll_create1(0);
+    int fds[2];
+    pipe(fds);
+
+    struct epoll_event ev;
+    ev.events = EPOLLIN | EPOLLET;
+    ev.data.fd = fds[0];
+    epoll_ctl(epfd, EPOLL_CTL_ADD, fds[0], &ev);
+
+    write(fds[1], "x", 1);
+
+    struct epoll_event events[4];
+    epoll_wait(epfd, events, 4, 1000);
+
+    epoll_ctl(epfd, EPOLL_CTL_DEL, fds[0], NULL);
+
+    /* nothing registered anymore: times out with 0 ready events */
+    epoll_wait(epfd, events, 4, 10);
+
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_epoll /tmp/mini_strace_test_epoll.c
+out=$($STRACE /tmp/mini_strace_test_epoll 2>&1)
+check_contains "epoll_ctl decodes EPOLL_CTL_ADD and the event struct (flags and fd)" \
+    'epoll_ctl\([^,]*, EPOLL_CTL_ADD, [^,]*, \{events=EPOLLIN\|EPOLLET, data=\{u32=[0-9]+, u64=[0-9]+\}\}\)' "$out"
+check_contains "epoll_ctl decodes EPOLL_CTL_DEL with a NULL event" \
+    'epoll_ctl\([^,]*, EPOLL_CTL_DEL, [^,]*, NULL\)' "$out"
+check_contains "epoll_wait/epoll_pwait decodes its output array of ready events" \
+    '(epoll_wait|epoll_pwait)\(.*\{events=EPOLLIN, data=\{u32=[0-9]+, u64=[0-9]+\}\}\]' "$out"
+check_contains "epoll_wait/epoll_pwait falls back to raw hex when no events are ready" \
+    '(epoll_wait|epoll_pwait)\([^,]*, 0x[0-9a-f]+, .*\) = 0' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

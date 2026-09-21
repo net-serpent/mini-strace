@@ -61,6 +61,11 @@ bare pointer or a raw number:
   `WIFSTOPPED` form real `strace` uses, and the resulting
   `struct rusage` (`ru_utime`/`ru_stime`/`ru_maxrss`) instead of raw
   pointers
+- `epoll_ctl`: `op` (`EPOLL_CTL_ADD`/`EPOLL_CTL_MOD`/`EPOLL_CTL_DEL`)
+  and the `struct epoll_event` (`{events=EPOLLIN|EPOLLET,
+  data={u32=4, u64=4}}`) instead of a raw number and pointer
+- `epoll_wait`/`epoll_pwait`: the array of ready events actually
+  returned instead of a raw buffer pointer
 - `getdents64`: the directory entries actually read
   (`[{d_ino=1234, d_off=..., d_reclen=32, d_name="file.txt",
   d_type=DT_REG}, ...]`) instead of a raw buffer pointer
