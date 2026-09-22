@@ -16,6 +16,9 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `poll`/`ppoll`: the `struct pollfd` array — each entry's `fd`,
+  requested `events`, and the kernel's `revents` shown together —
+  instead of a raw buffer pointer. Capped at 8 rendered entries.
 - `epoll_ctl`: `op` (`EPOLL_CTL_ADD`/`MOD`/`DEL`) and the
   `struct epoll_event` (`events` flags, `data` shown as both `u32`
   and `u64` since a trace can't know which the caller meant) instead

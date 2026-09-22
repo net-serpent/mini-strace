@@ -817,6 +817,42 @@ check_contains "epoll_wait/epoll_pwait decodes its output array of ready events"
 check_contains "epoll_wait/epoll_pwait falls back to raw hex when no events are ready" \
     '(epoll_wait|epoll_pwait)\([^,]*, 0x[0-9a-f]+, .*\) = 0' "$out"
 
+echo "=== poll/ppoll struct pollfd array decoding ==="
+cat >/tmp/mini_strace_test_poll.c <<'EOF'
+#include <poll.h>
+#include <unistd.h>
+
+int main(void) {
+    int fds[2];
+    pipe(fds);
+    write(fds[1], "x", 1);
+
+    struct pollfd pfds[2];
+    pfds[0].fd = fds[0];
+    pfds[0].events = POLLIN;
+    pfds[1].fd = fds[1];
+    pfds[1].events = POLLOUT;
+    poll(pfds, 2, 1000);
+
+    int idle_fds[2];
+    pipe(idle_fds);  /* separate, genuinely empty pipe */
+    struct pollfd idle[1];
+    idle[0].fd = idle_fds[0];
+    idle[0].events = POLLIN;
+    poll(idle, 1, 10);  /* nothing to read: times out with revents=0 */
+
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_poll /tmp/mini_strace_test_poll.c
+out=$($STRACE /tmp/mini_strace_test_poll 2>&1)
+check_contains "poll/ppoll decodes a ready fd's events and matching revents" \
+    '(poll|ppoll)\(\[.*\{fd=[0-9]+, events=POLLIN, revents=POLLIN\}' "$out"
+check_contains "poll/ppoll decodes both entries of a multi-fd array" \
+    '(poll|ppoll)\(\[\{fd=[0-9]+, events=POLLIN, revents=POLLIN\}, \{fd=[0-9]+, events=POLLOUT, revents=POLLOUT\}\]' "$out"
+check_contains "poll/ppoll shows revents=0 for an fd with no activity (timeout)" \
+    '(poll|ppoll)\(\[\{fd=[0-9]+, events=POLLIN, revents=0\}\]' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

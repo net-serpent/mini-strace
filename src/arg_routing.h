@@ -98,6 +98,10 @@ unsigned char epoll_event_arg_mask(const char *syscall);
  * exit-stop — see mini_strace.c). */
 unsigned char epoll_events_arg_mask(const char *syscall);
 
+/* poll's fds array + nfds (its length), deferred to the exit-stop —
+ * see mini_strace.c. */
+const buffer_arg_entry *pollfds_arg_lookup(const char *syscall);
+
 /* stat/lstat/fstat/newfstatat's output struct stat (deferred to the
  * exit-stop — see mini_strace.c). */
 unsigned char stat_buf_arg_mask(const char *syscall);

@@ -21,6 +21,7 @@
 #include <sys/mount.h>
 #include <sys/resource.h>
 #include <sys/epoll.h>
+#include <poll.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -1488,6 +1489,96 @@ void format_epoll_events_buf(pid_t pid, unsigned long long addr, long ret, char 
         char evbuf[256];
         format_one_epoll_event(&ev, evbuf, sizeof(evbuf));
         oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", i ? ", " : "", evbuf);
+    }
+    if (truncated && oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", ...");
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, "]");
+}
+
+/* poll()'s fds argument — a genuinely different shape from every
+ * other buffer/array this file decodes: it's populated by the
+ * caller before the syscall runs (each entry's fd and events), but
+ * every entry's revents field is then overwritten by the kernel
+ * before the syscall returns, so the same array is both an input
+ * and an output on the very same call. Deferred to the exit-stop
+ * like every other kernel-populated argument, showing both the
+ * caller's original events and the kernel's revents together,
+ * rather than showing the array twice (once at entry without
+ * revents, once at exit with it) the way two separate arguments
+ * would be handled.
+ *
+ * struct pollfd (<poll.h>) is a small, fixed-width struct (int fd;
+ * short events; short revents;) passed by pointer straight through
+ * to the kernel unchanged — no libc-wrapper translation the way
+ * struct sigaction has, no cross-architecture packing difference
+ * the way struct epoll_event has — so overlaying it onto a
+ * read_child_raw() copy per entry is safe without further
+ * verification. nfds (the array length) is the caller's own count,
+ * not the return value — unlike getdents64/epoll_wait, where the
+ * return value says how many entries are actually valid, every
+ * struct pollfd the caller declared is meaningful here regardless
+ * of how many actually saw activity (the kernel zeroes revents for
+ * the rest, not leaving them undefined). */
+static const flag_entry poll_events_flag_table[] = {
+    { POLLIN,     "POLLIN" },
+    { POLLPRI,    "POLLPRI" },
+    { POLLOUT,    "POLLOUT" },
+    { POLLERR,    "POLLERR" },
+    { POLLHUP,    "POLLHUP" },
+    { POLLNVAL,   "POLLNVAL" },
+    { POLLRDNORM, "POLLRDNORM" },
+    { POLLRDBAND, "POLLRDBAND" },
+    { POLLWRNORM, "POLLWRNORM" },
+    { POLLWRBAND, "POLLWRBAND" },
+#ifdef POLLRDHUP
+    { POLLRDHUP,  "POLLRDHUP" },
+#endif
+    { 0,          NULL },
+};
+
+static void format_poll_events_value(short events, char *out, size_t out_size) {
+    if (events == 0) {
+        snprintf(out, out_size, "0");
+        return;
+    }
+    unsigned long long remaining = (unsigned short)events;
+    size_t oi = 0;
+    for (int i = 0; poll_events_flag_table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & poll_events_flag_table[i].value) == poll_events_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", poll_events_flag_table[i].name);
+            remaining &= ~poll_events_flag_table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+#define POLLFDS_MAX_ENTRIES 8
+
+void format_pollfds_buf(pid_t pid, unsigned long long addr, unsigned long long nfds,
+                         char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    int truncated = nfds > POLLFDS_MAX_ENTRIES;
+    size_t count = truncated ? POLLFDS_MAX_ENTRIES : (size_t)nfds;
+
+    size_t oi = (size_t)snprintf(out, out_size, "[");
+    for (size_t i = 0; i < count && oi < out_size; i++) {
+        struct pollfd pfd;
+        unsigned long long pfd_addr = addr + i * sizeof(pfd);
+        if (read_child_raw(pid, pfd_addr, (unsigned char *)&pfd, sizeof(pfd)) < sizeof(pfd))
+            break;
+
+        char eventsbuf[128];
+        format_poll_events_value(pfd.events, eventsbuf, sizeof(eventsbuf));
+        char reventsbuf[128];
+        format_poll_events_value(pfd.revents, reventsbuf, sizeof(reventsbuf));
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s{fd=%d, events=%s, revents=%s}",
+                                i ? ", " : "", pfd.fd, eventsbuf, reventsbuf);
     }
     if (truncated && oi < out_size)
         oi += (size_t)snprintf(out + oi, out_size - oi, ", ...");

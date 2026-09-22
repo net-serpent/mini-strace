@@ -126,4 +126,12 @@ void format_epoll_event(pid_t pid, unsigned long long addr, char *out, size_t ou
  * filled in (not maxevents, the buffer's declared capacity). */
 void format_epoll_events_buf(pid_t pid, unsigned long long addr, long ret, char *out, size_t out_size);
 
+/* poll's fds argument — an array of struct pollfd, populated by the
+ * caller (fd, events) before the syscall runs and then overwritten
+ * by the kernel (revents) before it returns, so both are shown
+ * together at the exit-stop. nfds is the array length (the
+ * caller's own count, not the return value). */
+void format_pollfds_buf(pid_t pid, unsigned long long addr, unsigned long long nfds,
+                         char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

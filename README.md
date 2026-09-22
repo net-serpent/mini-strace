@@ -66,6 +66,10 @@ bare pointer or a raw number:
   data={u32=4, u64=4}}`) instead of a raw number and pointer
 - `epoll_wait`/`epoll_pwait`: the array of ready events actually
   returned instead of a raw buffer pointer
+- `poll`/`ppoll`: the `struct pollfd` array — each entry's `fd`,
+  requested `events`, and the kernel's `revents` together
+  (`[{fd=3, events=POLLIN, revents=POLLIN}, ...]`) — instead of a
+  raw buffer pointer
 - `getdents64`: the directory entries actually read
   (`[{d_ino=1234, d_off=..., d_reclen=32, d_name="file.txt",
   d_type=DT_REG}, ...]`) instead of a raw buffer pointer

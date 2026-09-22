@@ -505,6 +505,33 @@ unsigned char epoll_events_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds poll()'s fds array and which holds nfds (the
+ * array's length), decoded via format_pollfds_buf() in decoders.c.
+ * Reuses buffer_arg_entry's "one arg is a buffer, another holds its
+ * length" shape even though nfds isn't itself deferred — it's a
+ * plain caller-supplied count, but the array it describes still
+ * needs deferring to the exit-stop for revents, so this is looked
+ * up the same way accept_arg_table's deferred buf+length pairs are,
+ * not sockaddr_arg_table's entry-populated ones. ppoll is included
+ * at the same argument indices: glibc's poll() compiles down to a
+ * call to the ppoll syscall (with a NULL timeout/sigmask), the same
+ * libc-wrapper-picks-a-different-syscall situation already seen
+ * with access()/faccessat(), nanosleep()/clock_nanosleep(), and
+ * epoll_wait()/epoll_pwait(). */
+static const buffer_arg_entry pollfds_arg_table[] = {
+    { "poll",  0, 1 },
+    { "ppoll", 0, 1 },
+    { NULL,    0, 0 },
+};
+
+const buffer_arg_entry *pollfds_arg_lookup(const char *syscall) {
+    for (int i = 0; pollfds_arg_table[i].name != NULL; i++) {
+        if (strcmp(pollfds_arg_table[i].name, syscall) == 0)
+            return &pollfds_arg_table[i];
+    }
+    return NULL;
+}
+
 /* Which argument holds stat/lstat/fstat/newfstatat's output struct
  * stat, decoded via format_stat_buf() in decoders.c. Like wait4's
  * wstatus, this is only populated once the syscall actually returns,
@@ -865,6 +892,7 @@ static const syscall_argc_entry syscall_argc_table[] = {
     { "sched_yield",    0 },
     { "madvise",        3 },
     { "poll",           3 },
+    { "ppoll",          5 },  /* fds, nfds, tmo_p, sigmask, sigsetsize */
     { "epoll_ctl",      4 },
     { "epoll_wait",     4 },
     { "epoll_pwait",    6 },  /* epfd, events, maxevents, timeout, sigmask, sigsetsize */

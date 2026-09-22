@@ -819,6 +819,60 @@ output array with the right flags and fd, and a second call with
 nothing left registered times out with 0 ready events, correctly
 falling back to a raw pointer instead of an empty or garbage array.
 
+## poll struct pollfd
+
+`poll`'s `fds` argument is a genuinely different shape from every
+other buffer or array this project decodes: it's populated by the
+*caller* before the syscall runs (each entry's `fd` and requested
+`events`), but the kernel then overwrites every entry's `revents`
+field before the syscall returns — so the same array is both an
+input and an output on the same call. Rather than showing it twice
+(once at entry without `revents`, once at exit with it, the way two
+separate arguments would be handled), the whole thing is deferred to
+the exit-stop and shown once, with the caller's `events` and the
+kernel's `revents` together in each entry.
+
+`nfds` (the array's length) isn't itself deferred — it's a plain
+value the caller already supplied — but the array it describes still
+needs deferring, so this reuses `buffer_arg_entry`'s "one arg is a
+buffer, another holds its length" shape the same way
+`accept_arg_table`'s deferred pairs do, added as a new
+`pending_pollfds_entry` field on `tracee_state` (a pointer, like
+`pending_sockaddr_entry`, rather than a lookup keyed by index).
+Unlike `getdents64`/`epoll_wait`, `nfds` isn't compared against the
+return value to decide how many entries are valid — every entry the
+caller declared is meaningful regardless of how many actually saw
+activity, since the kernel zeroes `revents` for the rest rather than
+leaving them undefined.
+
+`struct pollfd` (`<poll.h>`: `int fd; short events; short
+revents;`) is a small, fixed-width struct passed by pointer straight
+through to the kernel unchanged — no libc-wrapper translation the
+way `struct sigaction` has, no cross-architecture packing
+difference the way `struct epoll_event` has — so overlaying it onto
+a `read_child_raw()` copy per entry needed no further verification
+beyond what `struct stat`/`struct rusage` already established is
+safe. `events`/`revents` decode via the same `POLLIN`/`POLLOUT`/...
+`OR`-of-bits walk every other flags argument in this file uses.
+Capped at 8 rendered entries, with a trailing `...` past that — same
+convention `format_getdents_buf()`/`format_epoll_events_buf()` use.
+
+Verifying this against a real trace surfaced the same
+architecture-vs-glibc-choice situation documented for `access`/
+`faccessat`, `nanosleep`/`clock_nanosleep`, and `epoll_wait`/
+`epoll_pwait` — a fourth instance of it now: glibc's `poll()`
+compiles down to a call to the `ppoll` syscall (with a `NULL`
+timeout/sigmask) rather than the `poll` syscall, so
+`pollfds_arg_table` and `syscall_argc_table` both cover `ppoll` at
+the same argument indices, and a trace of code calling `poll()`
+shows `ppoll(...)` instead.
+
+Verified against a real two-entry array (one fd made readable via a
+pipe write, one fd checked for writability): both entries decode
+with matching `events`/`revents`, and a separate, genuinely empty
+pipe checked with a short timeout correctly shows `revents=0` for an
+fd with no activity rather than stale or garbage flags.
+
 ## Testing
 
 `tests/run_tests.sh` runs every flag and decoder above against real
