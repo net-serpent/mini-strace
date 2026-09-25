@@ -1585,3 +1585,95 @@ void format_pollfds_buf(pid_t pid, unsigned long long addr, unsigned long long n
     if (oi < out_size)
         snprintf(out + oi, out_size - oi, "]");
 }
+
+/* statx()'s mask argument — which fields the caller is asking the
+ * kernel to fill in. An OR-of-bits walk like every other flags
+ * argument in this file, but STATX_BASIC_STATS (the common default
+ * request — everything a plain stat() would give you) is itself a
+ * combination of the individual STATX_TYPE/MODE/NLINK/.../BLOCKS
+ * bits, so it's listed first and consumed whole, the same technique
+ * open_flag_table uses for O_TMPFILE/O_SYNC needing to claim their
+ * bits before the plain flags they're built from get a chance to
+ * match on what's left over. */
+static const flag_entry statx_mask_table[] = {
+    { STATX_BASIC_STATS, "STATX_BASIC_STATS" },
+    { STATX_TYPE,        "STATX_TYPE" },
+    { STATX_MODE,        "STATX_MODE" },
+    { STATX_NLINK,       "STATX_NLINK" },
+    { STATX_UID,         "STATX_UID" },
+    { STATX_GID,         "STATX_GID" },
+    { STATX_ATIME,       "STATX_ATIME" },
+    { STATX_MTIME,       "STATX_MTIME" },
+    { STATX_CTIME,       "STATX_CTIME" },
+    { STATX_INO,         "STATX_INO" },
+    { STATX_SIZE,        "STATX_SIZE" },
+    { STATX_BLOCKS,      "STATX_BLOCKS" },
+    { STATX_BTIME,       "STATX_BTIME" },
+#ifdef STATX_MNT_ID
+    { STATX_MNT_ID,      "STATX_MNT_ID" },
+#endif
+    { 0,                 NULL },
+};
+
+void format_statx_mask(unsigned long long value, char *out, size_t out_size) {
+    unsigned long long remaining = value;
+    size_t oi = 0;
+    for (int i = 0; statx_mask_table[i].name != NULL && oi < out_size; i++) {
+        if (statx_mask_table[i].value != 0 &&
+            (remaining & statx_mask_table[i].value) == statx_mask_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", statx_mask_table[i].name);
+            remaining &= ~statx_mask_table[i].value;
+        }
+    }
+    if ((oi == 0 || remaining != 0) && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+/* statx()'s output struct statx, only meaningful *after* the
+ * syscall returns (deferred to the exit-stop, like the plain stat
+ * family's struct stat). Unlike struct stat, whose layout genuinely
+ * differs between x86-64 and aarch64, struct statx was deliberately
+ * designed (Linux 4.11) to have one fixed 256-byte layout on every
+ * architecture — no arch-specific variation to account for, and no
+ * libc-wrapper translation either, so overlaying glibc's own type
+ * (<sys/stat.h>, needs _GNU_SOURCE, already active in this file)
+ * onto a read_child_raw() copy is safe without further verification.
+ *
+ * Decodes the same subset format_stat_buf() does — stx_mode (file
+ * type + permission bits, via the same stat_file_type_name() helper
+ * plain stat uses, since the file-type and permission bit meanings
+ * are identical), stx_size, stx_nlink, stx_uid, stx_gid — so a statx
+ * trace and a plain stat trace show the same shape for the fields
+ * they share. Everything struct statx adds beyond plain stat
+ * (extended attributes, btime, mount ID, block device major/minor,
+ * DIO alignment, ...) is left undecoded, the same scope boundary
+ * plain stat already draws at its own timestamps. */
+void format_statx_buf(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    struct statx stx;
+    if (read_child_raw(pid, addr, (unsigned char *)&stx, sizeof(stx)) < sizeof(stx)) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    const char *type_name = stat_file_type_name(stx.stx_mode);
+    size_t oi;
+    if (type_name != NULL)
+        oi = (size_t)snprintf(out, out_size, "{stx_mode=%s|0%o", type_name,
+                               (unsigned int)(stx.stx_mode & ~(unsigned int)S_IFMT));
+    else
+        oi = (size_t)snprintf(out, out_size, "{stx_mode=0%o", (unsigned int)stx.stx_mode);
+
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", stx_size=%llu", (unsigned long long)stx.stx_size);
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", stx_nlink=%u", (unsigned int)stx.stx_nlink);
+    if (oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", stx_uid=%u", (unsigned int)stx.stx_uid);
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, ", stx_gid=%u}", (unsigned int)stx.stx_gid);
+}

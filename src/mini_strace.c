@@ -116,6 +116,7 @@ typedef struct {
     int pending_rusage_idx;       /* -1 = none; which arg is wait4's struct rusage* */
     int pending_epoll_events_idx; /* -1 = none; which arg is epoll_wait's output array */
     const buffer_arg_entry *pending_pollfds_entry; /* poll's fds array + nfds length */
+    int pending_statx_idx;        /* -1 = none; which arg is statx's output struct statx* */
     int suppressed;
     struct timespec entry_time;  /* when this syscall's entry-stop fired, for -T/-c */
     const char *current_name;    /* syscall in flight, for -c's per-name accounting */
@@ -454,6 +455,14 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 }
             }
             const buffer_arg_entry *pollfds_entry = pollfds_arg_lookup(name);
+            unsigned char statx_buf_mask = statx_buf_arg_mask(name);
+            int statx_buf_idx = -1;
+            for (int i = 0; i < 6; i++) {
+                if (statx_buf_mask & (1 << i)) {
+                    statx_buf_idx = i;
+                    break;
+                }
+            }
 
             if (show_timing || summary_mode)
                 clock_gettime(CLOCK_MONOTONIC, &ts->entry_time);
@@ -477,25 +486,27 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_rusage_idx = -1;
                 ts->pending_epoll_events_idx = -1;
                 ts->pending_pollfds_entry = NULL;
+                ts->pending_statx_idx = -1;
             } else if (read_entry != NULL || accept_entry != NULL || wait_status_idx >= 0 ||
                        msghdr_recv_idx >= 0 || stat_buf_idx >= 0 || getdents_buf_idx >= 0 ||
                        sigaction_old_idx >= 0 || timespec_out_idx >= 0 || rusage_idx >= 0 ||
-                       epoll_events_idx >= 0 || pollfds_entry != NULL) {
+                       epoll_events_idx >= 0 || pollfds_entry != NULL || statx_buf_idx >= 0) {
                 /* read()-family, accept/getsockname/getpeername-family,
                  * wait4, recvmsg, the stat family, getdents64,
-                 * rt_sigaction's oldact, epoll_wait, poll, and/or a
-                 * kernel-populated struct timespec/rusage: their
-                 * buffer/sockaddr/wstatus/msghdr/struct stat/dirent
-                 * buffer/struct sigaction/timespec/rusage/epoll_event
-                 * or pollfd array is unpopulated (or, for poll's
-                 * revents, incomplete) until the syscall actually
-                 * runs, so there's nothing useful to dereference yet —
-                 * stash everything and build the whole line at the
-                 * exit-stop instead. More than one can apply to the
-                 * same call (recvfrom has a deferred data buffer *and*
-                 * a deferred sockaddr; wait4 has a deferred wstatus
-                 * *and* a deferred rusage); the exit-stop print below
-                 * handles any combination, or none, being set. */
+                 * rt_sigaction's oldact, epoll_wait, poll, statx,
+                 * and/or a kernel-populated struct timespec/rusage:
+                 * their buffer/sockaddr/wstatus/msghdr/struct stat/
+                 * dirent buffer/struct sigaction/timespec/rusage/
+                 * epoll_event/pollfd/statx array or struct is
+                 * unpopulated (or, for poll's revents, incomplete)
+                 * until the syscall actually runs, so there's nothing
+                 * useful to dereference yet — stash everything and
+                 * build the whole line at the exit-stop instead. More
+                 * than one can apply to the same call (recvfrom has a
+                 * deferred data buffer *and* a deferred sockaddr;
+                 * wait4 has a deferred wstatus *and* a deferred
+                 * rusage); the exit-stop print below handles any
+                 * combination, or none, being set. */
                 ts->pending_name = name;
                 memcpy(ts->pending_args, raw_args, sizeof(raw_args));
                 ts->pending_read_entry = read_entry;
@@ -509,6 +520,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_rusage_idx = rusage_idx;
                 ts->pending_epoll_events_idx = epoll_events_idx;
                 ts->pending_pollfds_entry = pollfds_entry;
+                ts->pending_statx_idx = statx_buf_idx;
             } else {
                 /* everything else prints immediately, same as before:
                  * known path-string args get dereferenced, write()'s
@@ -525,6 +537,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_rusage_idx = -1;
                 ts->pending_epoll_events_idx = -1;
                 ts->pending_pollfds_entry = NULL;
+                ts->pending_statx_idx = -1;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
@@ -626,19 +639,20 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     ts->pending_stat_idx >= 0 || ts->pending_getdents_idx >= 0 ||
                     ts->pending_sigaction_idx >= 0 || ts->pending_timespec_out_idx >= 0 ||
                     ts->pending_rusage_idx >= 0 || ts->pending_epoll_events_idx >= 0 ||
-                    ts->pending_pollfds_entry != NULL) {
+                    ts->pending_pollfds_entry != NULL || ts->pending_statx_idx >= 0) {
                     /* deferred print: build the whole "name(args) = ret"
                      * line now that the return value (and anything the
-                     * kernel filled in) is available. Any of the eleven
+                     * kernel filled in) is available. Any of the twelve
                      * pending fields can be set alone (read()-family,
                      * accept/getsockname/getpeername-family, wait4,
                      * recvmsg, the stat family, getdents64,
                      * rt_sigaction's oldact, a kernel-populated
                      * timespec, wait4's rusage, epoll_wait's output
-                     * array, or poll's fds array) or combined (recvfrom:
-                     * a deferred data buffer *and* a deferred sockaddr;
-                     * wait4: a deferred wstatus *and* a deferred rusage,
-                     * in the same call) — each claims its own argument
+                     * array, poll's fds array, or statx) or combined
+                     * (recvfrom: a deferred data buffer *and* a
+                     * deferred sockaddr; wait4: a deferred wstatus
+                     * *and* a deferred rusage, in the same call) —
+                     * each claims its own argument
                      * slot, so there's no conflict rendering them into
                      * the same line. Skipped entirely under -c, which
                      * never prints per-call lines. */
@@ -687,6 +701,13 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                          * entry-stop's, which clock_settime alone
                          * actually reaches. */
                         unsigned char clockid_mask = clockid_arg_mask(ts->pending_name);
+                        /* statx's mask argument is entry-populated
+                         * too, but statx always has a struct statx*
+                         * argument, so — same reasoning as clockid
+                         * above — it's never reached from the
+                         * entry-stop's own dispatch and needs its own
+                         * here instead. */
+                        unsigned char statx_mask_mask = statx_mask_arg_mask(ts->pending_name);
 
                         /* the socklen_t the kernel wrote the real
                          * sockaddr size into is itself only valid now,
@@ -716,6 +737,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_timespec(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (clockid_mask & (1 << i))
                                 format_clockid(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (statx_mask_mask & (1 << i))
+                                format_statx_mask(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_read_entry != NULL &&
                                 i == ts->pending_read_entry->buf_idx && ret > 0)
                                 read_child_buffer(wpid, ts->pending_args[i], (unsigned long long)ret,
@@ -744,6 +767,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_pollfds_buf(wpid, ts->pending_args[i],
                                                     ts->pending_args[ts->pending_pollfds_entry->len_idx],
                                                     argbuf[i], sizeof(argbuf[i]));
+                            else if (ts->pending_statx_idx == i && ret >= 0)
+                                format_statx_buf(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else
                                 format_hex_or_fd_arg(wpid, ts->pending_args[i], fd_mask & (1 << i),
                                                       argbuf[i], sizeof(argbuf[i]));
@@ -761,6 +786,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     ts->pending_rusage_idx = -1;
                     ts->pending_epoll_events_idx = -1;
                     ts->pending_pollfds_entry = NULL;
+                    ts->pending_statx_idx = -1;
                 }
 
                 double elapsed = 0.0;

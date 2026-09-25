@@ -57,6 +57,9 @@ bare pointer or a raw number:
 - `stat`/`lstat`/`fstat`/`newfstatat`: the resulting `struct stat`
   (`{st_mode=S_IFREG|0644, st_size=1234, st_nlink=1, st_uid=0,
   st_gid=0}`) instead of a raw pointer
+- `statx`: the requested field mask (`STATX_BASIC_STATS`, ...) and
+  the resulting `struct statx` (the same fields `stat` decodes)
+  instead of a raw number and pointer
 - `wait4`: exit status, decoded into the `WIFEXITED`/`WIFSIGNALED`/
   `WIFSTOPPED` form real `strace` uses, and the resulting
   `struct rusage` (`ru_utime`/`ru_stime`/`ru_maxrss`) instead of raw

@@ -553,6 +553,44 @@ unsigned char stat_buf_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds statx()'s mask, decoded via
+ * format_statx_mask() in decoders.c. Populated by the caller before
+ * the syscall runs, but statx's other argument (statxbuf) always
+ * routes the whole call through the deferred path — routing is
+ * keyed on syscall name, and statx always has a struct statx*
+ * argument — so unlike a true entry-only mask this is only ever
+ * dispatched from the exit-stop's loop, the same situation
+ * clock_gettime/clock_nanosleep's clockid ended up in. */
+static const string_arg_entry statx_mask_arg_table[] = {
+    { "statx", 0x08 },  /* arg 3 */
+    { NULL,    0x00 },
+};
+
+unsigned char statx_mask_arg_mask(const char *syscall) {
+    for (int i = 0; statx_mask_arg_table[i].name != NULL; i++) {
+        if (strcmp(statx_mask_arg_table[i].name, syscall) == 0)
+            return statx_mask_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds statx()'s output struct statx, decoded via
+ * format_statx_buf() in decoders.c. Only populated once the syscall
+ * actually returns, so like stat_buf_arg_mask this is deferred to
+ * the exit-stop, not dereferenced here. */
+static const string_arg_entry statx_buf_arg_table[] = {
+    { "statx", 0x10 },  /* arg 4 */
+    { NULL,    0x00 },
+};
+
+unsigned char statx_buf_arg_mask(const char *syscall) {
+    for (int i = 0; statx_buf_arg_table[i].name != NULL; i++) {
+        if (strcmp(statx_buf_arg_table[i].name, syscall) == 0)
+            return statx_buf_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds getdents64()'s output buffer, decoded via
  * format_getdents_buf() in decoders.c. Like read()'s buffer, this
  * is only populated once the syscall actually runs, so it's

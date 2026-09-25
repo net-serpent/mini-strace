@@ -512,6 +512,56 @@ kernel reports them as `0777` by convention), and a nonexistent path
 (the call fails with `ENOENT` and the unpopulated struct correctly
 falls back to a raw pointer instead of decoding garbage).
 
+## statx struct statx
+
+`statx`'s `mask` argument (which fields the caller wants filled in)
+and `statxbuf` output are decoded alongside the path argument the
+plain stat family already had. `mask` is an OR-of-bits walk like
+every other flags argument in this file, with `STATX_BASIC_STATS` —
+the common default request, itself a combination of the individual
+`STATX_TYPE`/`MODE`/`NLINK`/`UID`/`GID`/`ATIME`/`MTIME`/`CTIME`/
+`INO`/`SIZE`/`BLOCKS` bits — listed first in the table so it's
+matched and consumed whole rather than exploded into eleven
+individual names, the same technique `open_flag_table` uses for
+`O_TMPFILE`/`O_SYNC` needing to claim their bits before the plain
+flags they're built from get a chance to match on what's left over.
+
+`statx` always has a `struct statx*` argument, so — like
+`clock_gettime`/`clock_nanosleep`'s `clockid` before this — `mask`'s
+decode is never reachable from the entry-stop's own dispatch chain
+(the whole call is unconditionally routed through the deferred
+path) and is dispatched from the exit-stop's loop only; this project
+now checks for exactly this situation whenever a syscall gains a new
+kernel-populated argument, rather than discovering it the hard way
+again.
+
+`struct statx` itself, unlike `struct stat`, was deliberately
+designed (Linux 4.11) to have one fixed 256-byte layout on every
+architecture — no arch-specific variation to account for the way
+`struct stat`'s layout genuinely differs between x86-64 and aarch64,
+and no libc-wrapper translation the way `struct sigaction` has — so
+overlaying glibc's own type onto a `read_child_raw()` copy needed no
+further verification beyond what `format_stat_buf()` already
+established is safe for a stat-shaped struct.
+
+`format_statx_buf()` decodes the exact same subset
+`format_stat_buf()` does — `stx_mode` (file type + permission bits,
+via the same `stat_file_type_name()` helper, since the bit meanings
+are identical to plain `stat`'s `st_mode`), `stx_size`, `stx_nlink`,
+`stx_uid`, `stx_gid` — so a `statx` trace and a plain `stat` trace
+show the same shape for the fields they share. Everything `struct
+statx` adds beyond plain `stat` (extended attributes, `btime`, mount
+ID, block device major/minor, DIO alignment, ...) is left
+undecoded, the same scope boundary plain `stat` already draws at its
+own timestamps.
+
+Verified against a real file (`STATX_BASIC_STATS` decodes as the
+combined name rather than eleven separate flags, the output struct
+matches what `fstat` would show for the same file, and the path
+argument still decodes as a string alongside the deferred struct)
+and a nonexistent path (fails with `ENOENT`, path still decodes,
+struct correctly falls back to raw hex).
+
 ## getdents64 directory entries
 
 `getdents64`'s output buffer is deferred the same way `read()`'s is

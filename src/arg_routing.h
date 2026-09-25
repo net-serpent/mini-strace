@@ -106,6 +106,14 @@ const buffer_arg_entry *pollfds_arg_lookup(const char *syscall);
  * exit-stop — see mini_strace.c). */
 unsigned char stat_buf_arg_mask(const char *syscall);
 
+/* statx's mask argument. Only ever dispatched from the exit-stop —
+ * see mini_strace.c. */
+unsigned char statx_mask_arg_mask(const char *syscall);
+
+/* statx's output struct statx (deferred to the exit-stop — see
+ * mini_strace.c). */
+unsigned char statx_buf_arg_mask(const char *syscall);
+
 /* getdents64's output buffer of directory entries (deferred to the
  * exit-stop — see mini_strace.c). */
 unsigned char getdents_buf_arg_mask(const char *syscall);

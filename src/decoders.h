@@ -134,4 +134,12 @@ void format_epoll_events_buf(pid_t pid, unsigned long long addr, long ret, char 
 void format_pollfds_buf(pid_t pid, unsigned long long addr, unsigned long long nfds,
                          char *out, size_t out_size);
 
+/* statx's mask argument (which fields the caller is requesting). */
+void format_statx_mask(unsigned long long value, char *out, size_t out_size);
+
+/* statx's output struct statx — stx_mode, stx_size, stx_nlink,
+ * stx_uid, stx_gid, the same subset format_stat_buf() decodes. Only
+ * meaningful after the syscall returns. */
+void format_statx_buf(pid_t pid, unsigned long long addr, char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

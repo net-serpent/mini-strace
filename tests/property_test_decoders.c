@@ -133,6 +133,7 @@ int main(void) {
         { "format_map_flags",                format_map_flags },
         { "format_mount_flags",              format_mount_flags },
         { "format_epoll_op",                 format_epoll_op },
+        { "format_statx_mask",               format_statx_mask },
         { "format_socket_domain",            format_socket_domain },
         { "format_socket_type",              format_socket_type },
         { "format_signal_arg",               format_signal_arg },

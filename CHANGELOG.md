@@ -16,6 +16,10 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `statx`: the requested field mask (`STATX_BASIC_STATS`, ...) and
+  the resulting `struct statx` (`stx_mode`, `stx_size`, `stx_nlink`,
+  `stx_uid`, `stx_gid` — the same fields `stat` decodes) instead of
+  a raw number and pointer.
 - `poll`/`ppoll`: the `struct pollfd` array — each entry's `fd`,
   requested `events`, and the kernel's `revents` shown together —
   instead of a raw buffer pointer. Capped at 8 rendered entries.

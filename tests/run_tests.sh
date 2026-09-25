@@ -853,6 +853,30 @@ check_contains "poll/ppoll decodes both entries of a multi-fd array" \
 check_contains "poll/ppoll shows revents=0 for an fd with no activity (timeout)" \
     '(poll|ppoll)\(\[\{fd=[0-9]+, events=POLLIN, revents=0\}\]' "$out"
 
+echo "=== statx struct statx decoding ==="
+cat >/tmp/mini_strace_test_statx.c <<'EOF'
+#define _GNU_SOURCE
+#include <sys/stat.h>
+#include <fcntl.h>
+
+int main(void) {
+    struct statx stx;
+    statx(AT_FDCWD, "/etc/hostname", 0, STATX_BASIC_STATS, &stx);
+    statx(AT_FDCWD, "/definitely/does/not/exist", 0, STATX_BASIC_STATS, &stx);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_statx /tmp/mini_strace_test_statx.c
+out=$($STRACE /tmp/mini_strace_test_statx 2>&1)
+check_contains "statx decodes STATX_BASIC_STATS as the combined mask name" \
+    'statx\([^,]*, "/etc/hostname", [^,]*, STATX_BASIC_STATS,' "$out"
+check_contains "statx decodes its output struct statx's mode, size, nlink, uid, gid" \
+    'statx\(.*\{stx_mode=S_IFREG\|[0-7]+, stx_size=[0-9]+, stx_nlink=[0-9]+, stx_uid=[0-9]+, stx_gid=[0-9]+\}\)' "$out"
+check_contains "statx's path argument still decodes as a string alongside the deferred struct statx" \
+    'statx\([^,]*, "/definitely/does/not/exist"' "$out"
+check_contains "a failed statx leaves the unpopulated struct statx as raw hex, not garbage decoded content" \
+    'statx\([^{]*\) = -2 \(ENOENT\)' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!
