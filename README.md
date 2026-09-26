@@ -31,6 +31,9 @@ bare pointer or a raw number:
 - `socket`/`socketpair`: domain and type
   (`socket(AF_INET, SOCK_STREAM|SOCK_CLOEXEC, 0x0)` instead of two
   bare hex numbers)
+- `setsockopt`/`getsockopt`: `level` (`SOL_SOCKET`, `IPPROTO_TCP`,
+  ...) and, for `SOL_SOCKET`/`IPPROTO_TCP`, `optname`
+  (`SO_REUSEADDR`, `TCP_NODELAY`, ...) instead of raw numbers
 - `kill`/`tkill`/`tgkill`: target signal by name (`SIGTERM` instead
   of `0xf`; the null signal `0` prints as plain `0`)
 - `lseek`: `whence` (`SEEK_SET`/`SEEK_CUR`/`SEEK_END` instead of

@@ -142,4 +142,13 @@ void format_statx_mask(unsigned long long value, char *out, size_t out_size);
  * meaningful after the syscall returns. */
 void format_statx_buf(pid_t pid, unsigned long long addr, char *out, size_t out_size);
 
+/* setsockopt/getsockopt's level argument. */
+void format_sockopt_level(unsigned long long value, char *out, size_t out_size);
+
+/* setsockopt/getsockopt's optname argument. Needs level too, since
+ * the same numeric optname means different things under different
+ * levels. */
+void format_sockopt_optname(unsigned long long level, unsigned long long optname,
+                             char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

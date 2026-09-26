@@ -16,6 +16,12 @@ on release.
 ### Added
 
 - `LICENSE`: MIT.
+- `setsockopt`/`getsockopt`: `level` (`SOL_SOCKET`, `IPPROTO_TCP`,
+  ...) and, for `SOL_SOCKET`/`IPPROTO_TCP` (the two most commonly
+  traced levels), `optname` (`SO_REUSEADDR`, `TCP_NODELAY`, ...)
+  instead of raw numbers. `optname` under any other level falls back
+  to hex; `optval` is left undecoded, its real type depends on which
+  option it is.
 - `statx`: the requested field mask (`STATX_BASIC_STATS`, ...) and
   the resulting `struct statx` (`stx_mode`, `stx_size`, `stx_nlink`,
   `stx_uid`, `stx_gid` — the same fields `stat` decodes) instead of

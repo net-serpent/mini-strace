@@ -249,6 +249,40 @@ OR'd into the same int as the base type (they are `O_CLOEXEC`/
 real socket type's low bits). Those two are peeled off and appended
 as separate names; the base type is still a lookup.
 
+## setsockopt/getsockopt level and optname
+
+`level` is a plain enum lookup like every other single-value
+argument in this file. `optname` is the first argument this project
+decodes that genuinely can't be looked up from its own value alone:
+the same number means a different option depending on `level` —
+optname `1` is `SO_DEBUG` under `SOL_SOCKET` but `TCP_MAXSEG` under
+`IPPROTO_TCP`. `format_sockopt_optname()` takes both values, and
+`mini_strace.c` reads `raw_args[i - 1]` for `level` when it hits the
+`optname` slot rather than needing a `len_idx`-style lookup table
+entry the way `sockaddr`'s length argument does — `level` always
+immediately precedes `optname` for both syscalls, a fixed
+relationship rather than one that varies by syscall.
+
+Only two levels are covered: `SOL_SOCKET` (`SO_REUSEADDR`,
+`SO_KEEPALIVE`, `SO_LINGER`, ...) and `IPPROTO_TCP` (`TCP_NODELAY`
+above all — disabling Nagle's algorithm is one of the most commonly
+traced socket calls there is). Every other level (`IPPROTO_IP`,
+`IPPROTO_IPV6`, `IPPROTO_UDP`, ...) falls back to plain hex for
+`optname` — an explicit scope boundary, the same incremental-
+coverage approach `ioctl`'s request codes take, rather than an
+oversight. `optval` itself is left undecoded entirely: its real type
+(a plain `int`, `struct linger`, `struct timeval`, a multicast
+membership struct, ...) depends on which specific option this is,
+which is exactly the kind of per-option struct table `ioctl`'s third
+argument was already scoped out of decoding.
+
+Verified against a real socket: `SOL_SOCKET`/`SO_REUSEADDR` and
+`IPPROTO_TCP`/`TCP_NODELAY` both decode on `setsockopt`,
+`SOL_SOCKET`/`SO_TYPE` decodes on `getsockopt`, and a `getsockopt`
+call under `IPPROTO_IP` (a level this project doesn't decode
+`optname` for) correctly falls back to raw hex rather than guessing
+or misattributing a `SOL_SOCKET`/`IPPROTO_TCP` name.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

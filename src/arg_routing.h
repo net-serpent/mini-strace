@@ -61,6 +61,12 @@ unsigned char socket_domain_arg_mask(const char *syscall);
 /* socket/socketpair's type. */
 unsigned char socket_type_arg_mask(const char *syscall);
 
+/* setsockopt/getsockopt's level. */
+unsigned char sockopt_level_arg_mask(const char *syscall);
+
+/* setsockopt/getsockopt's optname. */
+unsigned char sockopt_optname_arg_mask(const char *syscall);
+
 /* kill/tkill/tgkill's target signal number, or rt_sigaction's
  * signal being configured. */
 unsigned char signal_arg_mask(const char *syscall);

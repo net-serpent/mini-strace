@@ -243,6 +243,43 @@ unsigned char socket_type_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds setsockopt()/getsockopt()'s level, decoded
+ * via format_sockopt_level() in decoders.c. Populated by the caller
+ * before the syscall runs, dereferenced at the entry-stop like
+ * every other plain-value lookup in this file. */
+static const string_arg_entry sockopt_level_arg_table[] = {
+    { "setsockopt",  0x02 },  /* arg 1 */
+    { "getsockopt",  0x02 },  /* arg 1 */
+    { NULL,          0x00 },
+};
+
+unsigned char sockopt_level_arg_mask(const char *syscall) {
+    for (int i = 0; sockopt_level_arg_table[i].name != NULL; i++) {
+        if (strcmp(sockopt_level_arg_table[i].name, syscall) == 0)
+            return sockopt_level_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds setsockopt()/getsockopt()'s optname, decoded
+ * via format_sockopt_optname() in decoders.c. Always immediately
+ * follows level for both syscalls (level, optname, ...), so
+ * mini_strace.c reads raw_args[i-1] for the level value rather than
+ * needing a separate len_idx-style lookup. */
+static const string_arg_entry sockopt_optname_arg_table[] = {
+    { "setsockopt",  0x04 },  /* arg 2 */
+    { "getsockopt",  0x04 },  /* arg 2 */
+    { NULL,          0x00 },
+};
+
+unsigned char sockopt_optname_arg_mask(const char *syscall) {
+    for (int i = 0; sockopt_optname_arg_table[i].name != NULL; i++) {
+        if (strcmp(sockopt_optname_arg_table[i].name, syscall) == 0)
+            return sockopt_optname_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds kill()/tkill()/tgkill()'s target signal
  * number, or rt_sigaction()'s signal being configured, decoded via
  * format_signal_arg() (decoders.c). rt_sigaction's sig is never the

@@ -22,6 +22,8 @@
 #include <sys/resource.h>
 #include <sys/epoll.h>
 #include <poll.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -1676,4 +1678,102 @@ void format_statx_buf(pid_t pid, unsigned long long addr, char *out, size_t out_
         oi += (size_t)snprintf(out + oi, out_size - oi, ", stx_uid=%u", (unsigned int)stx.stx_uid);
     if (oi < out_size)
         snprintf(out + oi, out_size - oi, ", stx_gid=%u}", (unsigned int)stx.stx_gid);
+}
+
+/* setsockopt()/getsockopt()'s level argument — a plain enum lookup,
+ * not bits to OR. */
+static const flag_entry sockopt_level_table[] = {
+    { SOL_SOCKET,   "SOL_SOCKET" },
+    { IPPROTO_IP,   "IPPROTO_IP" },
+    { IPPROTO_TCP,  "IPPROTO_TCP" },
+    { IPPROTO_UDP,  "IPPROTO_UDP" },
+    { IPPROTO_IPV6, "IPPROTO_IPV6" },
+    { IPPROTO_ICMP, "IPPROTO_ICMP" },
+    { SOL_RAW,      "SOL_RAW" },
+    { SOL_PACKET,   "SOL_PACKET" },
+    { 0,            NULL },
+};
+
+void format_sockopt_level(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; sockopt_level_table[i].name != NULL; i++) {
+        if (sockopt_level_table[i].value == value) {
+            snprintf(out, out_size, "%s", sockopt_level_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
+/* setsockopt()/getsockopt()'s optname argument — unlike every other
+ * lookup in this file, the same numeric value means completely
+ * different things depending on level (optname 1 is SO_DEBUG under
+ * SOL_SOCKET, but TCP_MAXSEG under IPPROTO_TCP), so this needs both
+ * arguments together rather than looking at optname alone. Only the
+ * two levels most traces actually use are covered — SOL_SOCKET
+ * (SO_REUSEADDR, SO_KEEPALIVE, SO_LINGER, ...) and IPPROTO_TCP
+ * (TCP_NODELAY above all — disabling Nagle's algorithm is one of
+ * the most commonly traced socket calls there is). Anything else
+ * (IPPROTO_IP, IPPROTO_IPV6, IPPROTO_UDP, ...) falls back to plain
+ * hex, an explicit scope boundary rather than an oversight: each
+ * additional level is its own table to get right, the same
+ * incremental-coverage approach ioctl's request codes take. */
+static const flag_entry sockopt_optname_socket_table[] = {
+    { SO_DEBUG,       "SO_DEBUG" },
+    { SO_REUSEADDR,   "SO_REUSEADDR" },
+    { SO_TYPE,        "SO_TYPE" },
+    { SO_ERROR,       "SO_ERROR" },
+    { SO_DONTROUTE,   "SO_DONTROUTE" },
+    { SO_BROADCAST,   "SO_BROADCAST" },
+    { SO_SNDBUF,      "SO_SNDBUF" },
+    { SO_RCVBUF,      "SO_RCVBUF" },
+    { SO_KEEPALIVE,   "SO_KEEPALIVE" },
+    { SO_OOBINLINE,   "SO_OOBINLINE" },
+    { SO_LINGER,      "SO_LINGER" },
+    { SO_REUSEPORT,   "SO_REUSEPORT" },
+    { SO_RCVTIMEO,    "SO_RCVTIMEO" },
+    { SO_SNDTIMEO,    "SO_SNDTIMEO" },
+    { SO_ACCEPTCONN,  "SO_ACCEPTCONN" },
+    { SO_BINDTODEVICE, "SO_BINDTODEVICE" },
+    { SO_TIMESTAMP,   "SO_TIMESTAMP" },
+    { SO_PASSCRED,    "SO_PASSCRED" },
+    { SO_PEERCRED,    "SO_PEERCRED" },
+    { SO_RCVLOWAT,    "SO_RCVLOWAT" },
+    { SO_SNDLOWAT,    "SO_SNDLOWAT" },
+    { 0,              NULL },
+};
+
+static const flag_entry sockopt_optname_tcp_table[] = {
+    { TCP_NODELAY,      "TCP_NODELAY" },
+    { TCP_MAXSEG,       "TCP_MAXSEG" },
+    { TCP_CORK,         "TCP_CORK" },
+    { TCP_KEEPIDLE,     "TCP_KEEPIDLE" },
+    { TCP_KEEPINTVL,    "TCP_KEEPINTVL" },
+    { TCP_KEEPCNT,      "TCP_KEEPCNT" },
+    { TCP_SYNCNT,       "TCP_SYNCNT" },
+    { TCP_QUICKACK,     "TCP_QUICKACK" },
+#ifdef TCP_USER_TIMEOUT
+    { TCP_USER_TIMEOUT, "TCP_USER_TIMEOUT" },
+#endif
+    { TCP_INFO,         "TCP_INFO" },
+    { TCP_DEFER_ACCEPT, "TCP_DEFER_ACCEPT" },
+    { 0,                NULL },
+};
+
+void format_sockopt_optname(unsigned long long level, unsigned long long optname,
+                             char *out, size_t out_size) {
+    const flag_entry *table = NULL;
+    if (level == SOL_SOCKET)
+        table = sockopt_optname_socket_table;
+    else if (level == IPPROTO_TCP)
+        table = sockopt_optname_tcp_table;
+
+    if (table != NULL) {
+        for (int i = 0; table[i].name != NULL; i++) {
+            if (table[i].value == optname) {
+                snprintf(out, out_size, "%s", table[i].name);
+                return;
+            }
+        }
+    }
+    snprintf(out, out_size, "0x%llx", optname);
 }

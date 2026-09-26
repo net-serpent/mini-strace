@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <sys/socket.h>
 
 #include "../src/decoders.h"
 
@@ -49,6 +50,17 @@ typedef void (*decoder_fn)(unsigned long long value, char *out, size_t out_size)
  * which is filesystem I/O, not decoder logic, and out of scope. */
 static void wrap_hex_or_fd_arg(unsigned long long value, char *out, size_t out_size) {
     format_hex_or_fd_arg(0, value, 0, out, out_size);
+}
+
+/* format_sockopt_optname takes a level alongside optname, which
+ * format_open_flags and friends don't need, so it's wrapped with
+ * level fixed to SOL_SOCKET (sweeping value as optname) to fit the
+ * same shape as everything else here. The buffer-safety logic this
+ * harness actually checks doesn't depend on which level's table (or
+ * neither, falling back to hex) ends up matching, so one fixed
+ * level is enough to exercise both code paths. */
+static void wrap_sockopt_optname(unsigned long long value, char *out, size_t out_size) {
+    format_sockopt_optname(SOL_SOCKET, value, out, out_size);
 }
 
 static uint64_t rng_state = 0x9E3779B97F4A7C15ULL;
@@ -134,6 +146,8 @@ int main(void) {
         { "format_mount_flags",              format_mount_flags },
         { "format_epoll_op",                 format_epoll_op },
         { "format_statx_mask",               format_statx_mask },
+        { "format_sockopt_level",             format_sockopt_level },
+        { "format_sockopt_optname(level=SOL_SOCKET)", wrap_sockopt_optname },
         { "format_socket_domain",            format_socket_domain },
         { "format_socket_type",              format_socket_type },
         { "format_signal_arg",               format_signal_arg },

@@ -877,6 +877,40 @@ check_contains "statx's path argument still decodes as a string alongside the de
 check_contains "a failed statx leaves the unpopulated struct statx as raw hex, not garbage decoded content" \
     'statx\([^{]*\) = -2 \(ENOENT\)' "$out"
 
+echo "=== setsockopt/getsockopt level and optname decoding ==="
+cat >/tmp/mini_strace_test_sockopt.c <<'EOF'
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+
+int main(void) {
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+
+    int one = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+
+    int val;
+    socklen_t len = sizeof(val);
+    getsockopt(s, SOL_SOCKET, SO_TYPE, &val, &len);
+
+    /* a level this project doesn't decode optname for: falls back to hex */
+    getsockopt(s, IPPROTO_IP, 5, &val, &len);
+
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_sockopt /tmp/mini_strace_test_sockopt.c
+out=$($STRACE /tmp/mini_strace_test_sockopt 2>&1)
+check_contains "setsockopt decodes SOL_SOCKET's SO_REUSEADDR" \
+    'setsockopt\([^,]*, SOL_SOCKET, SO_REUSEADDR,' "$out"
+check_contains "setsockopt decodes IPPROTO_TCP's TCP_NODELAY" \
+    'setsockopt\([^,]*, IPPROTO_TCP, TCP_NODELAY,' "$out"
+check_contains "getsockopt decodes SOL_SOCKET's SO_TYPE" \
+    'getsockopt\([^,]*, SOL_SOCKET, SO_TYPE,' "$out"
+check_contains "getsockopt falls back to raw hex for optname under a level this project doesn't cover" \
+    'getsockopt\([^,]*, IPPROTO_IP, 0x5,' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!
