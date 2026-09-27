@@ -283,6 +283,58 @@ call under `IPPROTO_IP` (a level this project doesn't decode
 `optname` for) correctly falls back to raw hex rather than guessing
 or misattributing a `SOL_SOCKET`/`IPPROTO_TCP` name.
 
+## select/pselect6 fd_set arguments
+
+`readfds`/`writefds`/`exceptfds` are each a bitmask of file
+descriptors (`fd_set`, a fixed 128-byte/1024-bit buffer on Linux
+regardless of `nfds`) rather than an array of structs, so
+`format_fdset_buf()` reads the buffer directly and lists the set
+bits as descriptor numbers (`[3, 4]`), capped at 8 entries the same
+way `getdents64`/`epoll_wait`/`poll` cap their arrays. `nfds` (arg 0
+in both syscalls) bounds how many bits are meaningful; reads are
+still capped at the fixed 128-byte size regardless of what `nfds`
+claims, since it's a tracee-controlled value.
+
+All three arguments are routed through one mask
+(`fdset_arg_mask()`) rather than three separate ones, since `select`
+and `pselect6` place them at the same fixed indices (1, 2, 3) with
+`nfds` always at index 0 — `mini_strace.c` passes `raw_args[0]`
+directly as the bound, the same cross-argument approach
+`setsockopt`/`getsockopt`'s `optname` uses for `level`, just with a
+fixed index instead of `i - 1`.
+
+Decoded at the entry-stop, not deferred — the one departure from
+every other kernel-populated buffer this project decodes
+(`struct pollfd`, `struct epoll_event`, `struct rusage`, ...), and
+worth spelling out why. Every one of those has *separate* input and
+output fields (a `pollfd`'s `events` vs `revents`; an `rusage` that's
+simply unpopulated garbage until the call returns), so reading once
+at the exit-stop shows both what was asked and what happened.
+`fd_set` doesn't: `select()`/`pselect6()` overwrite the exact same
+buffer in place, clearing the bits for descriptors that aren't
+ready, so by the exit-stop the caller's original request is already
+gone — reading there would show only the survivors, with no way to
+tell they used to mean "watching for read" versus "watching for
+write" if, say, the same fd appeared in both sets and only one
+direction fired. Showing the request (immediate, at the entry-stop,
+the same timing `sendmsg`'s already-populated `struct msghdr` uses)
+is judged more useful to read out of a trace than the post-call
+result, and this project has no snapshot-before-the-call machinery
+for any argument to show both without adding one just for this.
+
+Verified against a real program: both `select()` and `pselect()`
+(glibc) compiled down to the same raw `pselect6` syscall in this
+project's aarch64 dev container — the same libc-wrapper-picks-a-
+different-raw-syscall pattern `nanosleep`/`poll` already hit — so
+the regression test accepts either `select(...)` or `pselect6(...)`
+in its output, the same way the `nanosleep`/`clock_nanosleep` test
+does. `select`'s own raw syscall entry is kept in the routing tables
+regardless, since x86-64 still has a real `select` syscall number a
+program could reach directly (`syscall(SYS_select, ...)`, or a
+different libc that doesn't route through `pselect6`), and its
+argument layout is the standard 5-argument `select(2)` shape with no
+wrapping struct to account for.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

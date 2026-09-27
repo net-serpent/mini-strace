@@ -151,4 +151,10 @@ void format_sockopt_level(unsigned long long value, char *out, size_t out_size);
 void format_sockopt_optname(unsigned long long level, unsigned long long optname,
                              char *out, size_t out_size);
 
+/* select's/pselect6's readfds/writefds/exceptfds arguments — a
+ * bitmask of file descriptors. nfds bounds how many bits are
+ * meaningful (the sibling argument at index 0 in both syscalls). */
+void format_fdset_buf(pid_t pid, unsigned long long addr, unsigned long long nfds,
+                       char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

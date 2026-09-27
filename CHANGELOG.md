@@ -22,6 +22,13 @@ on release.
   instead of raw numbers. `optname` under any other level falls back
   to hex; `optval` is left undecoded, its real type depends on which
   option it is.
+- `select`/`pselect6`: `readfds`/`writefds`/`exceptfds` as the actual
+  file descriptors being watched (`[3, 4]`, `NULL` when a set isn't
+  passed) instead of a raw bitmask pointer. Decoded from what the
+  caller requested, not which descriptors became ready, since the
+  kernel overwrites the same buffer in place to report readiness and
+  this project has no mechanism to snapshot an argument before the
+  call and show both.
 - `statx`: the requested field mask (`STATX_BASIC_STATS`, ...) and
   the resulting `struct statx` (`stx_mode`, `stx_size`, `stx_nlink`,
   `stx_uid`, `stx_gid` — the same fields `stat` decodes) instead of

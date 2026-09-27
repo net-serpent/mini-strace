@@ -551,6 +551,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char socket_type_mask = socket_type_arg_mask(name);
                     unsigned char sockopt_level_mask = sockopt_level_arg_mask(name);
                     unsigned char sockopt_optname_mask = sockopt_optname_arg_mask(name);
+                    unsigned char fdset_mask = fdset_arg_mask(name);
                     unsigned char signal_mask = signal_arg_mask(name);
                     unsigned char lseek_whence_mask = lseek_whence_arg_mask(name);
                     unsigned char fcntl_cmd_mask = fcntl_cmd_arg_mask(name);
@@ -592,6 +593,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_sockopt_level(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (sockopt_optname_mask & (1 << i))
                             format_sockopt_optname(raw_args[i - 1], raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (fdset_mask & (1 << i))
+                            format_fdset_buf(wpid, raw_args[i], raw_args[0], argbuf[i], sizeof(argbuf[i]));
                         else if (signal_mask & (1 << i))
                             format_signal_arg(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (lseek_whence_mask & (1 << i))

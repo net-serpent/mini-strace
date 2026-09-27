@@ -1777,3 +1777,62 @@ void format_sockopt_optname(unsigned long long level, unsigned long long optname
     }
     snprintf(out, out_size, "0x%llx", optname);
 }
+
+/* select()'s/pselect6()'s readfds/writefds/exceptfds arguments — a
+ * bitmask of file descriptors rather than an array of structs, the
+ * shape every fd_set is regardless of which of the three arguments
+ * it's passed as. All three are read the same way; mini_strace.c
+ * passes raw_args[0] (nfds, always the first argument in both
+ * syscalls) as the bound on which bits are meaningful, the same
+ * cross-argument approach setsockopt/getsockopt's optname uses for
+ * level.
+ *
+ * Decoded at the entry-stop, not deferred: select()/pselect6()
+ * overwrite this exact buffer in place to report which descriptors
+ * are ready, so by the exit-stop the caller's original request is
+ * already gone. Showing that request — what's being watched — is
+ * judged more useful to read out of a trace than the post-call
+ * result would be, and this project has no mechanism to snapshot an
+ * argument before the call and show both.
+ *
+ * fd_set is a fixed 128-byte/1024-bit buffer on Linux regardless of
+ * nfds (nfds only says how many of those bits the kernel will
+ * actually look at); reads are capped at that fixed size no matter
+ * what nfds claims, since a tracee can pass any value there. */
+#define FDSET_MAX_BYTES 128
+#define FDSET_MAX_BITS (FDSET_MAX_BYTES * 8)
+#define FDSET_MAX_ENTRIES 8
+
+void format_fdset_buf(pid_t pid, unsigned long long addr, unsigned long long nfds,
+                       char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    size_t nbits = nfds > FDSET_MAX_BITS ? (size_t)FDSET_MAX_BITS : (size_t)nfds;
+    size_t nbytes = (nbits + 7) / 8;
+
+    unsigned char bits[FDSET_MAX_BYTES];
+    if (read_child_raw(pid, addr, bits, nbytes) < nbytes) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+
+    size_t oi = (size_t)snprintf(out, out_size, "[");
+    int count = 0;
+    for (size_t fd = 0; fd < nbits; fd++) {
+        if (!(bits[fd / 8] & (1 << (fd % 8))))
+            continue;
+        if (count >= FDSET_MAX_ENTRIES) {
+            if (oi < out_size)
+                oi += (size_t)snprintf(out + oi, out_size - oi, ", ...");
+            break;
+        }
+        if (oi < out_size)
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%zu", count ? ", " : "", fd);
+        count++;
+    }
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, "]");
+}

@@ -911,6 +911,42 @@ check_contains "getsockopt decodes SOL_SOCKET's SO_TYPE" \
 check_contains "getsockopt falls back to raw hex for optname under a level this project doesn't cover" \
     'getsockopt\([^,]*, IPPROTO_IP, 0x5,' "$out"
 
+echo "=== select/pselect6 fd_set decoding ==="
+cat >/tmp/mini_strace_test_select.c <<'EOF'
+#include <sys/select.h>
+#include <unistd.h>
+
+int main(void) {
+    int p[2];
+    pipe(p);
+    fd_set rfds, wfds;
+
+    FD_ZERO(&rfds);
+    FD_ZERO(&wfds);
+    FD_SET(0, &rfds);
+    FD_SET(p[0], &rfds);
+    FD_SET(p[1], &wfds);
+    struct timeval tv = { 0, 0 };
+    select(p[1] + 1, &rfds, &wfds, NULL, &tv);
+
+    FD_ZERO(&rfds);
+    FD_SET(p[1], &rfds);
+    struct timespec ts = { 0, 0 };
+    pselect(p[1] + 1, &rfds, NULL, NULL, &ts, NULL);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_select /tmp/mini_strace_test_select.c
+out=$($STRACE /tmp/mini_strace_test_select 2>&1)
+check_contains "select/pselect6 decodes multiple readfds in ascending order (as select or pselect6, architecture-dependent)" \
+    '(select|pselect6)\([^,]*, \[0, 3\],' "$out"
+check_contains "select/pselect6 decodes a single-fd writefds" \
+    '(select|pselect6)\([^,]*, \[0, 3\], \[4\],' "$out"
+check_contains "select/pselect6 decodes a NULL exceptfds" \
+    '(select|pselect6)\([^,]*, \[0, 3\], \[4\], NULL,' "$out"
+check_contains "select/pselect6 decodes a single-fd readfds with NULL writefds/exceptfds" \
+    '(select|pselect6)\([^,]*, \[4\], NULL, NULL,' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

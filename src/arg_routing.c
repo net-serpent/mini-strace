@@ -280,6 +280,24 @@ unsigned char sockopt_optname_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which arguments hold select()'s/pselect6()'s readfds/writefds/
+ * exceptfds, decoded via format_fdset_buf() in decoders.c. nfds is
+ * arg 0 in both syscalls, so mini_strace.c reads raw_args[0]
+ * directly rather than needing a separate lookup for it. */
+static const string_arg_entry fdset_arg_table[] = {
+    { "select",   0x0e },  /* args 1, 2, 3 */
+    { "pselect6", 0x0e },  /* args 1, 2, 3 */
+    { NULL,       0x00 },
+};
+
+unsigned char fdset_arg_mask(const char *syscall) {
+    for (int i = 0; fdset_arg_table[i].name != NULL; i++) {
+        if (strcmp(fdset_arg_table[i].name, syscall) == 0)
+            return fdset_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds kill()/tkill()/tgkill()'s target signal
  * number, or rt_sigaction()'s signal being configured, decoded via
  * format_signal_arg() (decoders.c). rt_sigaction's sig is never the
@@ -968,6 +986,8 @@ static const syscall_argc_entry syscall_argc_table[] = {
     { "madvise",        3 },
     { "poll",           3 },
     { "ppoll",          5 },  /* fds, nfds, tmo_p, sigmask, sigsetsize */
+    { "select",         5 },  /* nfds, readfds, writefds, exceptfds, timeout */
+    { "pselect6",       6 },  /* nfds, readfds, writefds, exceptfds, timeout, sigmask */
     { "epoll_ctl",      4 },
     { "epoll_wait",     4 },
     { "epoll_pwait",    6 },  /* epfd, events, maxevents, timeout, sigmask, sigsetsize */

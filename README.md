@@ -34,6 +34,9 @@ bare pointer or a raw number:
 - `setsockopt`/`getsockopt`: `level` (`SOL_SOCKET`, `IPPROTO_TCP`,
   ...) and, for `SOL_SOCKET`/`IPPROTO_TCP`, `optname`
   (`SO_REUSEADDR`, `TCP_NODELAY`, ...) instead of raw numbers
+- `select`/`pselect6`: `readfds`/`writefds`/`exceptfds` as the actual
+  file descriptors being watched (`[3, 4]`) instead of a raw bitmask
+  pointer
 - `kill`/`tkill`/`tgkill`: target signal by name (`SIGTERM` instead
   of `0xf`; the null signal `0` prints as plain `0`)
 - `lseek`: `whence` (`SEEK_SET`/`SEEK_CUR`/`SEEK_END` instead of
