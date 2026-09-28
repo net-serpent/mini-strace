@@ -335,6 +335,44 @@ different libc that doesn't route through `pselect6`), and its
 argument layout is the standard 5-argument `select(2)` shape with no
 wrapping struct to account for.
 
+## sendto/recvfrom/sendmsg/recvmsg flags argument
+
+All four syscalls take a `flags` argument built from the same MSG_*
+namespace `format_msghdr()` already decodes inside `struct msghdr`'s
+own `msg_flags` field (the kernel's post-call annotations like
+`MSG_TRUNC`), so `format_msg_flags()` is that same OR-of-bits walk
+against the same table, now exposed publicly and used two ways: as
+the struct field it always was, and as this standalone argument.
+
+The routing is a repeat of a pattern this project has hit several
+times before (`str_mask`, `clockid_mask`, `sockopt_level_mask`, ...):
+`sendto`/`sendmsg` always reach the entry-stop's own dispatch chain
+and decode there, but `recvfrom`/`recvmsg` are *always* routed
+through the deferred path — `recvfrom` for its kernel-populated
+buffer and sockaddr, `recvmsg` for its kernel-populated `struct
+msghdr` — even though their own `flags` argument is just as
+caller-populated as `sendto`/`sendmsg`'s. Routing is keyed on syscall
+name, not on which arguments a particular call happens to need, so
+`recvfrom`/`recvmsg`'s `flags` would otherwise never be reached; it
+gets its own `msg_flags_mask` computed from `ts->pending_name` in the
+deferred exit-stop loop instead, the same duplication `clockid_mask`
+already has between both loops.
+
+One mask (`msg_flags_arg_mask()`) covers all four names rather than
+one per syscall, since the argument position only depends on how
+many arguments precede it: index 3 for `sendto`/`recvfrom` (after
+`fd`, `buf`, `len`), index 2 for `sendmsg`/`recvmsg` (after `fd`,
+`msg`) — not on which direction the call is.
+
+Verified against a real socketpair: `sendto`/`recvfrom` both decode
+`MSG_DONTWAIT`, `sendmsg` decodes `MSG_NOSIGNAL`, and `recvmsg`
+decodes `MSG_DONTWAIT` from the deferred path specifically (proving
+the routing actually reaches `recvfrom`/`recvmsg`'s dispatch, not
+just falling through to the raw-hex default and happening to look
+right). `format_msg_flags()` takes no `pid` and touches no tracee
+memory, so — unlike every other decoder added since `setsockopt`'s
+`optname` — it's also covered by the property test harness.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

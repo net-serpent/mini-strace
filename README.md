@@ -37,6 +37,9 @@ bare pointer or a raw number:
 - `select`/`pselect6`: `readfds`/`writefds`/`exceptfds` as the actual
   file descriptors being watched (`[3, 4]`) instead of a raw bitmask
   pointer
+- `sendto`/`recvfrom`/`sendmsg`/`recvmsg`: their own `flags` argument
+  (`MSG_DONTWAIT`, `MSG_NOSIGNAL`, `MSG_PEEK`, ...) instead of a raw
+  number
 - `kill`/`tkill`/`tgkill`: target signal by name (`SIGTERM` instead
   of `0xf`; the null signal `0` prints as plain `0`)
 - `lseek`: `whence` (`SEEK_SET`/`SEEK_CUR`/`SEEK_END` instead of

@@ -791,11 +791,14 @@ void format_ioctl_request(unsigned long long value, char *out, size_t out_size) 
              dir_name, _IOC_TYPE(req), _IOC_NR(req), _IOC_SIZE(req));
 }
 
-/* sendmsg/recvmsg's msg_flags argument (real, kernel-recognized
- * MSG_* bits) — a plain OR-of-bits walk like open()'s flags, used
- * only inside format_msghdr() below. 0 is itself a meaningful value
- * (no flags), not "nothing matched", so it's printed directly
- * rather than going through the walk. */
+/* The real, kernel-recognized MSG_* bits — a plain OR-of-bits walk
+ * like open()'s flags. Used both for sendmsg/recvmsg's own msg_flags
+ * struct field (inside format_msghdr() below) and, via the public
+ * format_msg_flags() wrapper, for the flags argument sendto/
+ * recvfrom/sendmsg/recvmsg all take directly (the same namespace —
+ * a program can pass MSG_DONTWAIT to any of the four). 0 is itself a
+ * meaningful value (no flags), not "nothing matched", so it's
+ * printed directly rather than going through the walk. */
 static const flag_entry msg_flag_table[] = {
     { MSG_OOB,          "MSG_OOB" },
     { MSG_PEEK,         "MSG_PEEK" },
@@ -813,12 +816,12 @@ static const flag_entry msg_flag_table[] = {
     { 0,                NULL },
 };
 
-static void format_msg_flags_value(int flags, char *out, size_t out_size) {
-    if (flags == 0) {
+void format_msg_flags(unsigned long long value, char *out, size_t out_size) {
+    if (value == 0) {
         snprintf(out, out_size, "0");
         return;
     }
-    unsigned long long remaining = (unsigned int)flags;
+    unsigned long long remaining = value;
     size_t oi = 0;
     for (int i = 0; msg_flag_table[i].name != NULL && oi < out_size; i++) {
         if ((remaining & msg_flag_table[i].value) == msg_flag_table[i].value) {
@@ -996,7 +999,7 @@ void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
 
     if (oi < out_size) {
         char flagbuf[128];
-        format_msg_flags_value(hdr.msg_flags, flagbuf, sizeof(flagbuf));
+        format_msg_flags((unsigned int)hdr.msg_flags, flagbuf, sizeof(flagbuf));
         snprintf(out + oi, out_size - oi, ", msg_flags=%s}", flagbuf);
     }
 }

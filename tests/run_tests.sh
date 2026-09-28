@@ -947,6 +947,53 @@ check_contains "select/pselect6 decodes a NULL exceptfds" \
 check_contains "select/pselect6 decodes a single-fd readfds with NULL writefds/exceptfds" \
     '(select|pselect6)\([^,]*, \[4\], NULL, NULL,' "$out"
 
+echo "=== sendto/recvfrom/sendmsg/recvmsg flags decoding ==="
+cat >/tmp/mini_strace_test_msgflags.c <<'EOF'
+#include <sys/socket.h>
+#include <string.h>
+#include <unistd.h>
+
+int main(void) {
+    int sv[2];
+    socketpair(AF_UNIX, SOCK_DGRAM, 0, sv);
+
+    char msg[] = "hi";
+    sendto(sv[0], msg, sizeof(msg), MSG_DONTWAIT, NULL, 0);
+
+    char buf[16];
+    recvfrom(sv[1], buf, sizeof(buf), MSG_DONTWAIT, NULL, NULL);
+
+    struct iovec iov = { .iov_base = msg, .iov_len = sizeof(msg) };
+    struct msghdr smsg;
+    memset(&smsg, 0, sizeof(smsg));
+    smsg.msg_iov = &iov;
+    smsg.msg_iovlen = 1;
+    sendmsg(sv[0], &smsg, MSG_NOSIGNAL);
+
+    char rbuf[16];
+    struct iovec riov = { .iov_base = rbuf, .iov_len = sizeof(rbuf) };
+    struct msghdr rmsg;
+    memset(&rmsg, 0, sizeof(rmsg));
+    rmsg.msg_iov = &riov;
+    rmsg.msg_iovlen = 1;
+    recvmsg(sv[1], &rmsg, MSG_DONTWAIT);
+
+    close(sv[0]);
+    close(sv[1]);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_msgflags /tmp/mini_strace_test_msgflags.c
+out=$($STRACE /tmp/mini_strace_test_msgflags 2>&1)
+check_contains "sendto decodes its own MSG_DONTWAIT flags argument" \
+    'sendto\([^,]*, [^,]*, [^,]*, MSG_DONTWAIT,' "$out"
+check_contains "recvfrom decodes its own MSG_DONTWAIT flags argument" \
+    'recvfrom\([^,]*, [^,]*, [^,]*, MSG_DONTWAIT,' "$out"
+check_contains "sendmsg decodes its own MSG_NOSIGNAL flags argument" \
+    ', MSG_NOSIGNAL\)' "$out"
+check_contains "recvmsg decodes its own MSG_DONTWAIT flags argument" \
+    ', MSG_DONTWAIT\)' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

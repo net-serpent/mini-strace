@@ -552,6 +552,14 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char sockopt_level_mask = sockopt_level_arg_mask(name);
                     unsigned char sockopt_optname_mask = sockopt_optname_arg_mask(name);
                     unsigned char fdset_mask = fdset_arg_mask(name);
+                    /* recvfrom/recvmsg's own flags argument is
+                     * entry-populated too, but both are always
+                     * routed through the deferred path (their
+                     * buffer/sockaddr/msghdr is kernel-populated),
+                     * so only sendto/sendmsg ever reach this
+                     * dispatch — recvfrom/recvmsg get their own
+                     * msg_flags_mask down in the deferred loop. */
+                    unsigned char msg_flags_mask = msg_flags_arg_mask(name);
                     unsigned char signal_mask = signal_arg_mask(name);
                     unsigned char lseek_whence_mask = lseek_whence_arg_mask(name);
                     unsigned char fcntl_cmd_mask = fcntl_cmd_arg_mask(name);
@@ -595,6 +603,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_sockopt_optname(raw_args[i - 1], raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (fdset_mask & (1 << i))
                             format_fdset_buf(wpid, raw_args[i], raw_args[0], argbuf[i], sizeof(argbuf[i]));
+                        else if (msg_flags_mask & (1 << i))
+                            format_msg_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (signal_mask & (1 << i))
                             format_signal_arg(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (lseek_whence_mask & (1 << i))
@@ -717,6 +727,14 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                          * entry-stop's own dispatch and needs its own
                          * here instead. */
                         unsigned char statx_mask_mask = statx_mask_arg_mask(ts->pending_name);
+                        /* recvfrom/recvmsg's own flags argument is
+                         * entry-populated too, but both always carry
+                         * a kernel-populated buffer/sockaddr/msghdr,
+                         * so — same reasoning as clockid_mask above —
+                         * they never reach the entry-stop's own
+                         * dispatch (only sendto/sendmsg do) and need
+                         * their own mask here instead. */
+                        unsigned char msg_flags_mask = msg_flags_arg_mask(ts->pending_name);
 
                         /* the socklen_t the kernel wrote the real
                          * sockaddr size into is itself only valid now,
@@ -748,6 +766,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_clockid(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (statx_mask_mask & (1 << i))
                                 format_statx_mask(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (msg_flags_mask & (1 << i))
+                                format_msg_flags(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_read_entry != NULL &&
                                 i == ts->pending_read_entry->buf_idx && ret > 0)
                                 read_child_buffer(wpid, ts->pending_args[i], (unsigned long long)ret,

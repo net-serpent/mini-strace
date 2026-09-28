@@ -298,6 +298,27 @@ unsigned char fdset_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds sendto()'s/recvfrom()'s/sendmsg()'s/
+ * recvmsg()'s own flags argument, decoded via format_msg_flags() in
+ * decoders.c. sendto/recvfrom carry it at index 3 (after fd, buf,
+ * len); sendmsg/recvmsg at index 2 (after fd, msg) — the same
+ * MSG_* namespace either way. */
+static const string_arg_entry msg_flags_arg_table[] = {
+    { "sendto",    0x08 },  /* arg 3 */
+    { "recvfrom",  0x08 },  /* arg 3 */
+    { "sendmsg",   0x04 },  /* arg 2 */
+    { "recvmsg",   0x04 },  /* arg 2 */
+    { NULL,        0x00 },
+};
+
+unsigned char msg_flags_arg_mask(const char *syscall) {
+    for (int i = 0; msg_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(msg_flags_arg_table[i].name, syscall) == 0)
+            return msg_flags_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds kill()/tkill()/tgkill()'s target signal
  * number, or rt_sigaction()'s signal being configured, decoded via
  * format_signal_arg() (decoders.c). rt_sigaction's sig is never the

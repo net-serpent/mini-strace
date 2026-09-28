@@ -29,6 +29,11 @@ on release.
   kernel overwrites the same buffer in place to report readiness and
   this project has no mechanism to snapshot an argument before the
   call and show both.
+- `sendto`/`recvfrom`/`sendmsg`/`recvmsg`: their own `flags` argument
+  (`MSG_DONTWAIT`, `MSG_NOSIGNAL`, `MSG_PEEK`, ...) instead of a raw
+  number. The same decoder `struct msghdr`'s own `msg_flags` field
+  already used, now also exposed for the argument every one of these
+  four syscalls takes directly.
 - `statx`: the requested field mask (`STATX_BASIC_STATS`, ...) and
   the resulting `struct statx` (`stx_mode`, `stx_size`, `stx_nlink`,
   `stx_uid`, `stx_gid` — the same fields `stat` decodes) instead of

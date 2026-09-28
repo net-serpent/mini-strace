@@ -70,6 +70,9 @@ unsigned char sockopt_optname_arg_mask(const char *syscall);
 /* select/pselect6's readfds/writefds/exceptfds. */
 unsigned char fdset_arg_mask(const char *syscall);
 
+/* sendto/recvfrom/sendmsg/recvmsg's own flags argument. */
+unsigned char msg_flags_arg_mask(const char *syscall);
+
 /* kill/tkill/tgkill's target signal number, or rt_sigaction's
  * signal being configured. */
 unsigned char signal_arg_mask(const char *syscall);
