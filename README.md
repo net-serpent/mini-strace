@@ -40,6 +40,10 @@ bare pointer or a raw number:
 - `sendto`/`recvfrom`/`sendmsg`/`recvmsg`: their own `flags` argument
   (`MSG_DONTWAIT`, `MSG_NOSIGNAL`, `MSG_PEEK`, ...) instead of a raw
   number
+- `readv`/`writev`: the `struct iovec` array (`[{iov_base="ab",
+  iov_len=2}, ...]`) instead of a raw buffer pointer. `readv`'s data
+  is truncated to the bytes actually read, spread across the iovecs
+  in order, the same convention `recvmsg` uses
 - `kill`/`tkill`/`tgkill`: target signal by name (`SIGTERM` instead
   of `0xf`; the null signal `0` prints as plain `0`)
 - `lseek`: `whence` (`SEEK_SET`/`SEEK_CUR`/`SEEK_END` instead of

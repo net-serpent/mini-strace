@@ -90,6 +90,12 @@ void format_ioctl_request(unsigned long long value, char *out, size_t out_size);
 void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
                     char *out, size_t out_size);
 
+/* readv/writev's iov argument directly (no enclosing struct
+ * msghdr). total_bytes follows the same convention as
+ * format_msghdr()'s: -1 for writev, the return value for readv. */
+void format_iovec_buf(pid_t pid, unsigned long long addr, unsigned long long iovcnt,
+                       long total_bytes, char *out, size_t out_size);
+
 /* sendto/recvfrom/sendmsg/recvmsg's own flags argument (MSG_DONTWAIT,
  * MSG_PEEK, ...) — the same namespace format_msghdr()'s msg_flags
  * field decodes. */

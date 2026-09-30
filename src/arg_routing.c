@@ -441,6 +441,28 @@ const buffer_arg_entry *buffer_arg_lookup(const char *syscall) {
     return NULL;
 }
 
+/* writev's iov argument (buf_idx) and its sibling iovcnt (reusing
+ * len_idx for a count, not a byte length — the same repurposing
+ * pollfds_arg_table below does for nfds), decoded via
+ * format_iovec_buf(). writev's data is the caller's own outgoing
+ * buffers, already fully populated before the syscall runs, so —
+ * like write()'s own single buffer above — it's looked up from the
+ * entry-stop's immediate dispatch. readv's is only meaningful after
+ * the syscall returns and gets its own lookup below instead, the
+ * same split read()/write() already have. */
+static const buffer_arg_entry iovec_write_arg_table[] = {
+    { "writev", 1, 2 },
+    { NULL,     0, 0 },
+};
+
+const buffer_arg_entry *iovec_write_arg_lookup(const char *syscall) {
+    for (int i = 0; iovec_write_arg_table[i].name != NULL; i++) {
+        if (strcmp(iovec_write_arg_table[i].name, syscall) == 0)
+            return &iovec_write_arg_table[i];
+    }
+    return NULL;
+}
+
 /* Syscalls whose input is a struct sockaddr, paired with which
  * argument slot holds it and which holds its length — same shape as
  * buffer_arg_table, reused as-is since it's the same idea (a slot
@@ -875,6 +897,24 @@ const buffer_arg_entry *read_arg_lookup(const char *syscall) {
     return NULL;
 }
 
+/* readv's iov argument and its sibling iovcnt — the deferred
+ * counterpart of iovec_write_arg_table above. Unlike read_arg_table,
+ * len_idx here is genuinely used (it's iovcnt, the array length the
+ * caller declared, the same way pollfds_arg_table's nfds is used —
+ * not a byte count the return value would replace). */
+static const buffer_arg_entry iovec_read_arg_table[] = {
+    { "readv", 1, 2 },
+    { NULL,    0, 0 },
+};
+
+const buffer_arg_entry *iovec_read_arg_lookup(const char *syscall) {
+    for (int i = 0; iovec_read_arg_table[i].name != NULL; i++) {
+        if (strcmp(iovec_read_arg_table[i].name, syscall) == 0)
+            return &iovec_read_arg_table[i];
+    }
+    return NULL;
+}
+
 /* How many of the 6 raw argument slots a syscall actually has, so
  * mini_strace.c can print exactly that many instead of always all
  * 6 (most of which would otherwise be leftover register garbage —
@@ -920,6 +960,8 @@ static const syscall_argc_entry syscall_argc_table[] = {
     { "write",          3 },
     { "pread64",        4 },
     { "pwrite64",       4 },
+    { "readv",          3 },
+    { "writev",         3 },
     { "lseek",          3 },
     { "fcntl",          3 },
     { "flock",          2 },

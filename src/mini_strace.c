@@ -117,6 +117,7 @@ typedef struct {
     int pending_epoll_events_idx; /* -1 = none; which arg is epoll_wait's output array */
     const buffer_arg_entry *pending_pollfds_entry; /* poll's fds array + nfds length */
     int pending_statx_idx;        /* -1 = none; which arg is statx's output struct statx* */
+    const buffer_arg_entry *pending_iovec_entry; /* readv's iov array + iovcnt */
     int suppressed;
     struct timespec entry_time;  /* when this syscall's entry-stop fired, for -T/-c */
     const char *current_name;    /* syscall in flight, for -c's per-name accounting */
@@ -463,6 +464,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     break;
                 }
             }
+            const buffer_arg_entry *iovec_read_entry = iovec_read_arg_lookup(name);
 
             if (show_timing || summary_mode)
                 clock_gettime(CLOCK_MONOTONIC, &ts->entry_time);
@@ -487,10 +489,12 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_epoll_events_idx = -1;
                 ts->pending_pollfds_entry = NULL;
                 ts->pending_statx_idx = -1;
+                ts->pending_iovec_entry = NULL;
             } else if (read_entry != NULL || accept_entry != NULL || wait_status_idx >= 0 ||
                        msghdr_recv_idx >= 0 || stat_buf_idx >= 0 || getdents_buf_idx >= 0 ||
                        sigaction_old_idx >= 0 || timespec_out_idx >= 0 || rusage_idx >= 0 ||
-                       epoll_events_idx >= 0 || pollfds_entry != NULL || statx_buf_idx >= 0) {
+                       epoll_events_idx >= 0 || pollfds_entry != NULL || statx_buf_idx >= 0 ||
+                       iovec_read_entry != NULL) {
                 /* read()-family, accept/getsockname/getpeername-family,
                  * wait4, recvmsg, the stat family, getdents64,
                  * rt_sigaction's oldact, epoll_wait, poll, statx,
@@ -521,6 +525,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_epoll_events_idx = epoll_events_idx;
                 ts->pending_pollfds_entry = pollfds_entry;
                 ts->pending_statx_idx = statx_buf_idx;
+                ts->pending_iovec_entry = iovec_read_entry;
             } else {
                 /* everything else prints immediately, same as before:
                  * known path-string args get dereferenced, write()'s
@@ -538,6 +543,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_epoll_events_idx = -1;
                 ts->pending_pollfds_entry = NULL;
                 ts->pending_statx_idx = -1;
+                ts->pending_iovec_entry = NULL;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
@@ -574,6 +580,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char fd_mask = show_fd_paths ? fd_arg_mask(name) : 0;
                     const buffer_arg_entry *buf_entry = buffer_arg_lookup(name);
                     const buffer_arg_entry *sockaddr_entry = sockaddr_arg_lookup(name);
+                    const buffer_arg_entry *iovec_write_entry = iovec_write_arg_lookup(name);
 
                     char argbuf[6][STR_ARG_BUF_LEN];
                     for (int i = 0; i < 6; i++) {
@@ -633,6 +640,9 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                         else if (sockaddr_entry != NULL && i == sockaddr_entry->buf_idx)
                             format_sockaddr(wpid, raw_args[i], raw_args[sockaddr_entry->len_idx],
                                              argbuf[i], sizeof(argbuf[i]));
+                        else if (iovec_write_entry != NULL && i == iovec_write_entry->buf_idx)
+                            format_iovec_buf(wpid, raw_args[i], raw_args[iovec_write_entry->len_idx],
+                                              -1, argbuf[i], sizeof(argbuf[i]));
                         else
                             format_hex_or_fd_arg(wpid, raw_args[i], fd_mask & (1 << i),
                                                   argbuf[i], sizeof(argbuf[i]));
@@ -658,7 +668,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     ts->pending_stat_idx >= 0 || ts->pending_getdents_idx >= 0 ||
                     ts->pending_sigaction_idx >= 0 || ts->pending_timespec_out_idx >= 0 ||
                     ts->pending_rusage_idx >= 0 || ts->pending_epoll_events_idx >= 0 ||
-                    ts->pending_pollfds_entry != NULL || ts->pending_statx_idx >= 0) {
+                    ts->pending_pollfds_entry != NULL || ts->pending_statx_idx >= 0 ||
+                    ts->pending_iovec_entry != NULL) {
                     /* deferred print: build the whole "name(args) = ret"
                      * line now that the return value (and anything the
                      * kernel filled in) is available. Any of the twelve
@@ -798,6 +809,11 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                                     argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_statx_idx == i && ret >= 0)
                                 format_statx_buf(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (ts->pending_iovec_entry != NULL &&
+                                     i == ts->pending_iovec_entry->buf_idx && ret >= 0)
+                                format_iovec_buf(wpid, ts->pending_args[i],
+                                                  ts->pending_args[ts->pending_iovec_entry->len_idx],
+                                                  ret, argbuf[i], sizeof(argbuf[i]));
                             else
                                 format_hex_or_fd_arg(wpid, ts->pending_args[i], fd_mask & (1 << i),
                                                       argbuf[i], sizeof(argbuf[i]));
@@ -816,6 +832,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     ts->pending_epoll_events_idx = -1;
                     ts->pending_pollfds_entry = NULL;
                     ts->pending_statx_idx = -1;
+                    ts->pending_iovec_entry = NULL;
                 }
 
                 double elapsed = 0.0;

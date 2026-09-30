@@ -373,6 +373,47 @@ right). `format_msg_flags()` takes no `pid` and touches no tracee
 memory, so — unlike every other decoder added since `setsockopt`'s
 `optname` — it's also covered by the property test harness.
 
+## readv/writev struct iovec array
+
+`readv`/`writev` pass a bare `struct iovec *` + `int iovcnt` with no
+enclosing `struct msghdr` — the exact same array shape
+`sendmsg`/`recvmsg`'s own `msg_iov`/`msg_iovlen` already walk inside
+`format_msghdr()`, just not wrapped in anything. Rather than
+duplicate that walk, `format_msghdr()`'s per-iovec loop was pulled
+out into a static `format_iovec_array()` helper that both
+`format_msghdr()` and the new public `format_iovec_buf()` call; the
+`msg_iov=[...]` output is byte-for-byte identical to before, and the
+regression suite's existing `sendmsg`/`recvmsg` tests catch a
+regression here just as well as a dedicated one would.
+
+`total_bytes` carries over `format_msghdr()`'s own convention
+unchanged: `-1` trusts each iovec's declared `iov_len` (`writev` —
+the caller's own outgoing buffers, already fully populated before
+the syscall runs, decoded at the entry-stop like `sendmsg`'s own
+`msg_iov`); the syscall's return value spreads that many actual
+bytes across the iovecs in order instead (`readv` — only meaningful
+once the kernel has filled them in, deferred to the exit-stop like
+`recvmsg`'s).
+
+The routing needed two separate lookups rather than one, mirroring
+the split `read()`/`write()` already have for their own single
+buffer: `iovec_write_arg_lookup()` (`writev`) reuses `buffer_arg_entry`
+the same way `buffer_arg_table` does for `write`'s buf+len, reached
+from the entry-stop's immediate dispatch; `iovec_read_arg_lookup()`
+(`readv`) reuses it the same way `pollfds_arg_table` does for poll's
+fds+nfds — `len_idx` holding a genuine count (`iovcnt`) rather than a
+byte length the return value would replace — and gets its own
+`pending_iovec_entry` field, checked at all three reset sites plus
+the deferred loop's outer gate, the same seven-touch-point pattern
+every previous deferred field added to `tracee_state` has needed.
+
+Verified against a real pipe: `writev` decodes both iovecs' full
+declared data; `readv` truncates `iov_base` to the actual bytes
+received (3 into a 3-byte buffer, the remaining 3 into a 5-byte
+buffer, `iov_len` kept as each buffer's declared size) — proving the
+deferred path is actually reached, not just falling through to the
+raw-hex default and happening to look plausible.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

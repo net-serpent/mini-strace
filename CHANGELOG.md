@@ -34,6 +34,15 @@ on release.
   number. The same decoder `struct msghdr`'s own `msg_flags` field
   already used, now also exposed for the argument every one of these
   four syscalls takes directly.
+- `readv`/`writev`: the `struct iovec` array itself (`[{iov_base=
+  "ab", iov_len=2}, {iov_base="cdef", iov_len=4}]`) instead of a raw
+  buffer pointer. `writev`'s is the caller's own outgoing data,
+  decoded at the entry-stop; `readv`'s is only meaningful after the
+  syscall returns and is truncated to the actual bytes read, spread
+  across the iovecs in order, the same convention `recvmsg` already
+  uses for its own iovecs. Both share the same array-walking code
+  `sendmsg`/`recvmsg`'s `msg_iov` uses internally, now factored out
+  and reused directly.
 - `statx`: the requested field mask (`STATX_BASIC_STATS`, ...) and
   the resulting `struct statx` (`stx_mode`, `stx_size`, `stx_nlink`,
   `stx_uid`, `stx_gid` — the same fields `stat` decodes) instead of

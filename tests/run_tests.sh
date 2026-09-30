@@ -994,6 +994,43 @@ check_contains "sendmsg decodes its own MSG_NOSIGNAL flags argument" \
 check_contains "recvmsg decodes its own MSG_DONTWAIT flags argument" \
     ', MSG_DONTWAIT\)' "$out"
 
+echo "=== readv/writev struct iovec array decoding ==="
+cat >/tmp/mini_strace_test_iovec.c <<'EOF'
+#include <sys/uio.h>
+#include <unistd.h>
+
+int main(void) {
+    int p[2];
+    pipe(p);
+
+    char part1[] = "ab";
+    char part2[] = "cdef";
+    struct iovec wiov[2] = {
+        { .iov_base = part1, .iov_len = 2 },
+        { .iov_base = part2, .iov_len = 4 },
+    };
+    writev(p[1], wiov, 2);
+
+    char rbuf1[3];
+    char rbuf2[5];
+    struct iovec riov[2] = {
+        { .iov_base = rbuf1, .iov_len = sizeof(rbuf1) },
+        { .iov_base = rbuf2, .iov_len = sizeof(rbuf2) },
+    };
+    readv(p[0], riov, 2);
+
+    close(p[0]);
+    close(p[1]);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_iovec /tmp/mini_strace_test_iovec.c
+out=$($STRACE /tmp/mini_strace_test_iovec 2>&1)
+check_contains "writev decodes both iovecs' full declared data" \
+    'writev\(.*\[\{iov_base="ab", iov_len=2\}, \{iov_base="cdef", iov_len=4\}\]' "$out"
+check_contains "readv's iov_base is truncated to actual bytes received, spread across iovecs in order" \
+    'readv\(.*\[\{iov_base="abc", iov_len=3\}, \{iov_base="def", iov_len=5\}\]' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

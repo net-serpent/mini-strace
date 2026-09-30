@@ -925,8 +925,65 @@ static void format_cmsg(pid_t pid, unsigned long long addr, size_t controllen,
  * value) means the kernel only reports the *total* bytes received
  * across every iovec, not per-iovec, so this walks the iovecs in
  * order consuming that budget the same way the kernel itself filled
- * them, the same convention real strace uses for recvmsg/readv. */
-#define MSGHDR_MAX_IOV 8
+ * them, the same convention real strace uses for recvmsg/readv.
+ *
+ * Shared with readv/writev's own iov argument via the public
+ * format_iovec_buf() below — an array of struct iovec is the same
+ * shape regardless of whether it arrived wrapped in a struct msghdr
+ * or passed directly. */
+#define IOVEC_ARRAY_MAX 8
+
+static void format_iovec_array(pid_t pid, unsigned long long addr, unsigned long long iovcnt,
+                                long total_bytes, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+
+    size_t iov_count = (size_t)iovcnt;
+    int truncated_iov = iov_count > IOVEC_ARRAY_MAX;
+    if (truncated_iov)
+        iov_count = IOVEC_ARRAY_MAX;
+
+    size_t oi = (size_t)snprintf(out, out_size, "[");
+    long remaining_bytes = total_bytes;
+    for (size_t i = 0; i < iov_count && oi < out_size; i++) {
+        struct iovec iov;
+        unsigned long long iov_addr = addr + i * sizeof(struct iovec);
+        if (read_child_raw(pid, iov_addr, (unsigned char *)&iov, sizeof(iov)) < sizeof(iov))
+            break;
+
+        unsigned long long show_len = (unsigned long long)iov.iov_len;
+        if (total_bytes >= 0) {
+            unsigned long long avail = remaining_bytes > 0 ? (unsigned long long)remaining_bytes : 0;
+            if (show_len > avail)
+                show_len = avail;
+            remaining_bytes -= (long)show_len;
+        }
+
+        char iovbuf[STR_ARG_BUF_LEN];
+        read_child_buffer(pid, (unsigned long long)(uintptr_t)iov.iov_base, show_len,
+                           iovbuf, sizeof(iovbuf));
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s{iov_base=%s, iov_len=%zu}",
+                                i ? ", " : "", iovbuf, (size_t)iov.iov_len);
+    }
+    if (truncated_iov && oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", ...");
+    if (oi < out_size)
+        snprintf(out + oi, out_size - oi, "]");
+}
+
+/* readv/writev's iov argument directly (no enclosing struct msghdr).
+ * total_bytes follows format_msghdr()'s own convention: -1 trusts
+ * each iovec's declared iov_len (writev — the caller's own data,
+ * already fully in memory before the syscall runs); the syscall's
+ * return value spreads that many actual bytes across the iovecs in
+ * order instead (readv — only meaningful once the kernel has filled
+ * them in). */
+void format_iovec_buf(pid_t pid, unsigned long long addr, unsigned long long iovcnt,
+                       long total_bytes, char *out, size_t out_size) {
+    format_iovec_array(pid, addr, iovcnt, total_bytes, out, out_size);
+}
 
 void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
                     char *out, size_t out_size) {
@@ -953,38 +1010,14 @@ void format_msghdr(pid_t pid, unsigned long long addr, long total_bytes,
     }
 
     if (oi < out_size)
-        oi += (size_t)snprintf(out + oi, out_size - oi, ", msg_iov=[");
-
-    size_t iov_count = (size_t)hdr.msg_iovlen;
-    int truncated_iov = iov_count > MSGHDR_MAX_IOV;
-    if (truncated_iov)
-        iov_count = MSGHDR_MAX_IOV;
-
-    long remaining_bytes = total_bytes;
-    for (size_t i = 0; i < iov_count && oi < out_size; i++) {
-        struct iovec iov;
-        unsigned long long iov_addr = (unsigned long long)(uintptr_t)hdr.msg_iov + i * sizeof(struct iovec);
-        if (read_child_raw(pid, iov_addr, (unsigned char *)&iov, sizeof(iov)) < sizeof(iov))
-            break;
-
-        unsigned long long show_len = (unsigned long long)iov.iov_len;
-        if (total_bytes >= 0) {
-            unsigned long long avail = remaining_bytes > 0 ? (unsigned long long)remaining_bytes : 0;
-            if (show_len > avail)
-                show_len = avail;
-            remaining_bytes -= (long)show_len;
-        }
-
-        char iovbuf[STR_ARG_BUF_LEN];
-        read_child_buffer(pid, (unsigned long long)(uintptr_t)iov.iov_base, show_len,
-                           iovbuf, sizeof(iovbuf));
-        oi += (size_t)snprintf(out + oi, out_size - oi, "%s{iov_base=%s, iov_len=%zu}",
-                                i ? ", " : "", iovbuf, (size_t)iov.iov_len);
+        oi += (size_t)snprintf(out + oi, out_size - oi, ", msg_iov=");
+    if (oi < out_size) {
+        char iovarraybuf[STR_ARG_BUF_LEN];
+        format_iovec_array(pid, (unsigned long long)(uintptr_t)hdr.msg_iov,
+                            (unsigned long long)hdr.msg_iovlen, total_bytes,
+                            iovarraybuf, sizeof(iovarraybuf));
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s", iovarraybuf);
     }
-    if (truncated_iov && oi < out_size)
-        oi += (size_t)snprintf(out + oi, out_size - oi, ", ...");
-    if (oi < out_size)
-        oi += (size_t)snprintf(out + oi, out_size - oi, "]");
 
     if (oi < out_size)
         oi += (size_t)snprintf(out + oi, out_size - oi, ", msg_control=");

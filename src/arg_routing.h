@@ -178,6 +178,13 @@ const buffer_arg_entry *accept_arg_lookup(const char *syscall);
  * the syscall runs (deferred to the exit-stop — see mini_strace.c). */
 const buffer_arg_entry *read_arg_lookup(const char *syscall);
 
+/* writev's iov + iovcnt — already populated at the entry-stop. */
+const buffer_arg_entry *iovec_write_arg_lookup(const char *syscall);
+
+/* readv's iov + iovcnt, only populated *after* the syscall runs
+ * (deferred to the exit-stop — see mini_strace.c). */
+const buffer_arg_entry *iovec_read_arg_lookup(const char *syscall);
+
 /* How many of the 6 raw argument slots this syscall actually has.
  * -1 means unknown — mini_strace.c falls back to showing all 6. */
 int syscall_argc(const char *syscall);
