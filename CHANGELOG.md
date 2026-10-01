@@ -43,6 +43,17 @@ on release.
   uses for its own iovecs. Both share the same array-walking code
   `sendmsg`/`recvmsg`'s `msg_iov` uses internally, now factored out
   and reused directly.
+- `prctl`: `option` (`PR_SET_NAME`, `PR_GET_DUMPABLE`, `PR_SET_SECCOMP`,
+  ...) instead of a raw number. For `PR_SET_NAME` specifically — by
+  far the most commonly traced option, since every
+  `pthread_setname_np()` goes through it — `arg2` decodes as the
+  name string being set. Every other option leaves `arg2` (and
+  `arg3`-`arg5`) as raw numbers; their meaning depends on which
+  option it is, the same scope boundary `ioctl`'s request-specific
+  third argument already draws. `PR_GET_NAME`'s own output name is
+  left undecoded, since unlike `PR_SET_NAME` it's only populated
+  after the syscall returns and showing it would need the same kind
+  of deferred handling `recvmsg`'s `msghdr` has.
 - `statx`: the requested field mask (`STATX_BASIC_STATS`, ...) and
   the resulting `struct statx` (`stx_mode`, `stx_size`, `stx_nlink`,
   `stx_uid`, `stx_gid` — the same fields `stat` decodes) instead of

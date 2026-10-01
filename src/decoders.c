@@ -24,6 +24,7 @@
 #include <poll.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <sys/prctl.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -1871,4 +1872,101 @@ void format_fdset_buf(pid_t pid, unsigned long long addr, unsigned long long nfd
     }
     if (oi < out_size)
         snprintf(out + oi, out_size - oi, "]");
+}
+
+/* prctl's option argument — a plain enum lookup, not bits to OR,
+ * like fcntl's cmd. Covers the stable, portable PR_* constants;
+ * ones that are architecture-specific (MIPS' PR_*_FP_MODE, ARM's
+ * PR_PAC_* and PR_SVE_* families) are left out rather than built for a platform
+ * this project doesn't target, and newer ones get an #ifdef guard
+ * the same way MS_LAZYTIME/TCP_USER_TIMEOUT do elsewhere in this
+ * file, for headers too old to have them. */
+static const flag_entry prctl_option_table[] = {
+    { PR_SET_PDEATHSIG,       "PR_SET_PDEATHSIG" },
+    { PR_GET_PDEATHSIG,       "PR_GET_PDEATHSIG" },
+    { PR_GET_DUMPABLE,        "PR_GET_DUMPABLE" },
+    { PR_SET_DUMPABLE,        "PR_SET_DUMPABLE" },
+    { PR_GET_UNALIGN,         "PR_GET_UNALIGN" },
+    { PR_SET_UNALIGN,         "PR_SET_UNALIGN" },
+    { PR_GET_KEEPCAPS,        "PR_GET_KEEPCAPS" },
+    { PR_SET_KEEPCAPS,        "PR_SET_KEEPCAPS" },
+    { PR_SET_NAME,            "PR_SET_NAME" },
+    { PR_GET_NAME,            "PR_GET_NAME" },
+    { PR_GET_ENDIAN,          "PR_GET_ENDIAN" },
+    { PR_SET_ENDIAN,          "PR_SET_ENDIAN" },
+    { PR_GET_SECCOMP,         "PR_GET_SECCOMP" },
+    { PR_SET_SECCOMP,         "PR_SET_SECCOMP" },
+    { PR_CAPBSET_READ,        "PR_CAPBSET_READ" },
+    { PR_CAPBSET_DROP,        "PR_CAPBSET_DROP" },
+    { PR_GET_TSC,             "PR_GET_TSC" },
+    { PR_SET_TSC,             "PR_SET_TSC" },
+    { PR_GET_SECUREBITS,      "PR_GET_SECUREBITS" },
+    { PR_SET_SECUREBITS,      "PR_SET_SECUREBITS" },
+    { PR_SET_TIMERSLACK,      "PR_SET_TIMERSLACK" },
+    { PR_GET_TIMERSLACK,      "PR_GET_TIMERSLACK" },
+    { PR_TASK_PERF_EVENTS_DISABLE, "PR_TASK_PERF_EVENTS_DISABLE" },
+    { PR_TASK_PERF_EVENTS_ENABLE,  "PR_TASK_PERF_EVENTS_ENABLE" },
+    { PR_MCE_KILL,            "PR_MCE_KILL" },
+    { PR_MCE_KILL_GET,        "PR_MCE_KILL_GET" },
+    { PR_SET_MM,              "PR_SET_MM" },
+    { PR_SET_PTRACER,         "PR_SET_PTRACER" },
+    { PR_SET_CHILD_SUBREAPER, "PR_SET_CHILD_SUBREAPER" },
+    { PR_GET_CHILD_SUBREAPER, "PR_GET_CHILD_SUBREAPER" },
+    { PR_SET_NO_NEW_PRIVS,    "PR_SET_NO_NEW_PRIVS" },
+    { PR_GET_NO_NEW_PRIVS,    "PR_GET_NO_NEW_PRIVS" },
+    { PR_GET_TID_ADDRESS,     "PR_GET_TID_ADDRESS" },
+    { PR_SET_THP_DISABLE,     "PR_SET_THP_DISABLE" },
+    { PR_GET_THP_DISABLE,     "PR_GET_THP_DISABLE" },
+#ifdef PR_CAP_AMBIENT
+    { PR_CAP_AMBIENT,         "PR_CAP_AMBIENT" },
+#endif
+#ifdef PR_SET_SPECULATION_CTRL
+    { PR_SET_SPECULATION_CTRL, "PR_SET_SPECULATION_CTRL" },
+    { PR_GET_SPECULATION_CTRL, "PR_GET_SPECULATION_CTRL" },
+#endif
+#ifdef PR_SET_IO_FLUSHER
+    { PR_SET_IO_FLUSHER,      "PR_SET_IO_FLUSHER" },
+    { PR_GET_IO_FLUSHER,      "PR_GET_IO_FLUSHER" },
+#endif
+#ifdef PR_SET_TAGGED_ADDR_CTRL
+    { PR_SET_TAGGED_ADDR_CTRL, "PR_SET_TAGGED_ADDR_CTRL" },
+    { PR_GET_TAGGED_ADDR_CTRL, "PR_GET_TAGGED_ADDR_CTRL" },
+#endif
+#ifdef PR_SET_SYSCALL_USER_DISPATCH
+    { PR_SET_SYSCALL_USER_DISPATCH, "PR_SET_SYSCALL_USER_DISPATCH" },
+#endif
+    { 0,                      NULL },
+};
+
+void format_prctl_option(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; prctl_option_table[i].name != NULL; i++) {
+        if (prctl_option_table[i].value == value) {
+            snprintf(out, out_size, "%s", prctl_option_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
+/* prctl's arg2 for the one option whose meaning this project
+ * decodes further: PR_SET_NAME, a NUL-terminated name (up to 15
+ * bytes + NUL) the kernel copies in — the single most commonly
+ * traced prctl call by far (every pthread_setname_np() goes through
+ * it). Takes the option value as well as arg2's address, the same
+ * cross-argument shape format_sockopt_optname() uses for level, and
+ * decides internally whether to read a string at all: PR_GET_NAME's
+ * arg2 is an output buffer the kernel only fills in *after* the
+ * syscall returns, which would need deferring the way recvmsg's
+ * msghdr is — out of scope for this round, so it's left as a raw
+ * address alongside every other option this project doesn't give
+ * arg2 a specific meaning for (PR_SET_DUMPABLE's 0/1, PR_SET_MM's
+ * sub-struct, ...), the same incremental-coverage boundary ioctl's
+ * request-specific third argument already draws. */
+void format_prctl_name_arg(pid_t pid, unsigned long long option, unsigned long long addr,
+                            char *out, size_t out_size) {
+    if (option == PR_SET_NAME) {
+        read_child_string(pid, addr, out, out_size);
+        return;
+    }
+    snprintf(out, out_size, "0x%llx", addr);
 }

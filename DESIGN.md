@@ -414,6 +414,59 @@ buffer, `iov_len` kept as each buffer's declared size) — proving the
 deferred path is actually reached, not just falling through to the
 raw-hex default and happening to look plausible.
 
+## prctl option and PR_SET_NAME
+
+`option` is a plain enum lookup like every other single-value
+argument in this file (`fcntl`'s `cmd`, `lseek`'s `whence`). The
+table covers the stable, portable `PR_*` constants; architecture-tied
+ones (MIPS' `PR_*_FP_MODE`, ARM's `PR_PAC_*`/`PR_SVE_*` families) are
+left out entirely rather than built for a platform this project
+doesn't target, and a handful of newer ones get an `#ifdef` guard the
+same way `MS_LAZYTIME`/`TCP_USER_TIMEOUT` do elsewhere, for headers
+too old to have them — all confirmed to compile clean on this
+project's own aarch64 dev container.
+
+`prctl` is unusual among this project's multi-purpose syscalls:
+every other syscall name picks one fixed meaning for each argument
+slot (`sendto`'s `flags` is always `flags`), but `prctl`'s `arg2`
+through `arg5` mean something completely different depending on
+`option`'s *value*, not anything knowable from the syscall name
+alone. Decoding `arg2` for every option would mean one argument slot
+needing as many interpretations as `ioctl`'s request-specific third
+argument has — explicitly out of scope, the same reasoning `ioctl`
+and `setsockopt`'s `optval` already apply.
+
+One option gets arg2 decoded anyway: `PR_SET_NAME`, the single most
+commonly traced `prctl` call by a wide margin (every
+`pthread_setname_np()` call goes through it) and a plain,
+unambiguous NUL-terminated string when it is the option in play.
+`format_prctl_name_arg()` takes the option value alongside arg2's
+address — the same cross-argument shape `format_sockopt_optname()`
+uses for `level` — and decides internally whether to treat arg2 as a
+string at all, falling back to a raw address for every other option
+exactly like `format_sockopt_optname()` falls back to hex for a
+level it doesn't cover.
+
+`PR_GET_NAME` is deliberately left undecoded even though it's the
+mirror image of `PR_SET_NAME`: its arg2 is an output buffer the
+kernel only fills in *after* the syscall returns, which would need
+the same deferred-to-exit-stop handling `recvmsg`'s `msghdr` has —
+and since `prctl` as a whole still only ever takes the entry-stop's
+immediate dispatch path (its "needs deferring" check has no way to
+know `option` is `PR_GET_NAME` without inspecting the argument value
+itself, something no other syscall's routing decision has needed to
+do), adding that would mean teaching the deferred-routing machinery
+to key off an argument's *value* rather than the syscall's *name*
+for the first time. Left for a future round rather than taken on
+here.
+
+Verified against a real program: `PR_SET_NAME` decodes both the
+option and the name string (`prctl(PR_SET_NAME, "worker-1", ...)`);
+`PR_GET_DUMPABLE` and `PR_SET_DUMPABLE` both decode the option while
+leaving their unused/non-pointer arg2 as raw hex, confirming the
+`PR_SET_NAME`-only gate inside `format_prctl_name_arg()` actually
+discriminates rather than treating every option as a string.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

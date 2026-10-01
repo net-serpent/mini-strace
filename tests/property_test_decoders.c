@@ -159,6 +159,7 @@ int main(void) {
         { "format_clone_flags",              format_clone_flags },
         { "format_ioctl_request",            format_ioctl_request },
         { "format_msg_flags",                 format_msg_flags },
+        { "format_prctl_option",              format_prctl_option },
         { "format_hex_or_fd_arg(is_fd_arg=0)", wrap_hex_or_fd_arg },
     };
     size_t num_decoders = sizeof(decoders) / sizeof(decoders[0]);

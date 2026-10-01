@@ -73,6 +73,13 @@ unsigned char fdset_arg_mask(const char *syscall);
 /* sendto/recvfrom/sendmsg/recvmsg's own flags argument. */
 unsigned char msg_flags_arg_mask(const char *syscall);
 
+/* prctl's option argument. */
+unsigned char prctl_option_arg_mask(const char *syscall);
+
+/* prctl's arg2 — only meaningful for PR_SET_NAME, which
+ * format_prctl_name_arg() itself decides based on the option value. */
+unsigned char prctl_name_arg_mask(const char *syscall);
+
 /* kill/tkill/tgkill's target signal number, or rt_sigaction's
  * signal being configured. */
 unsigned char signal_arg_mask(const char *syscall);

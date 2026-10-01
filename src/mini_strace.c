@@ -566,6 +566,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                      * dispatch — recvfrom/recvmsg get their own
                      * msg_flags_mask down in the deferred loop. */
                     unsigned char msg_flags_mask = msg_flags_arg_mask(name);
+                    unsigned char prctl_option_mask = prctl_option_arg_mask(name);
+                    unsigned char prctl_name_mask = prctl_name_arg_mask(name);
                     unsigned char signal_mask = signal_arg_mask(name);
                     unsigned char lseek_whence_mask = lseek_whence_arg_mask(name);
                     unsigned char fcntl_cmd_mask = fcntl_cmd_arg_mask(name);
@@ -612,6 +614,10 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_fdset_buf(wpid, raw_args[i], raw_args[0], argbuf[i], sizeof(argbuf[i]));
                         else if (msg_flags_mask & (1 << i))
                             format_msg_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (prctl_option_mask & (1 << i))
+                            format_prctl_option(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (prctl_name_mask & (1 << i))
+                            format_prctl_name_arg(wpid, raw_args[i - 1], raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (signal_mask & (1 << i))
                             format_signal_arg(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (lseek_whence_mask & (1 << i))

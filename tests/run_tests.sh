@@ -1031,6 +1031,26 @@ check_contains "writev decodes both iovecs' full declared data" \
 check_contains "readv's iov_base is truncated to actual bytes received, spread across iovecs in order" \
     'readv\(.*\[\{iov_base="abc", iov_len=3\}, \{iov_base="def", iov_len=5\}\]' "$out"
 
+echo "=== prctl option and PR_SET_NAME decoding ==="
+cat >/tmp/mini_strace_test_prctl.c <<'EOF'
+#include <sys/prctl.h>
+
+int main(void) {
+    prctl(PR_SET_NAME, "worker-1", 0, 0, 0);
+    prctl(PR_GET_DUMPABLE, 0, 0, 0, 0);
+    prctl(PR_SET_DUMPABLE, 1, 0, 0, 0);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_prctl /tmp/mini_strace_test_prctl.c
+out=$($STRACE /tmp/mini_strace_test_prctl 2>&1)
+check_contains "prctl decodes PR_SET_NAME and its own name string argument" \
+    'prctl\(PR_SET_NAME, "worker-1",' "$out"
+check_contains "prctl decodes PR_GET_DUMPABLE, leaving its unused arg2 as raw hex" \
+    'prctl\(PR_GET_DUMPABLE, 0x0,' "$out"
+check_contains "prctl decodes PR_SET_DUMPABLE, leaving its 0/1 arg2 as raw hex" \
+    'prctl\(PR_SET_DUMPABLE, 0x1,' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

@@ -44,6 +44,9 @@ bare pointer or a raw number:
   iov_len=2}, ...]`) instead of a raw buffer pointer. `readv`'s data
   is truncated to the bytes actually read, spread across the iovecs
   in order, the same convention `recvmsg` uses
+- `prctl`: `option` (`PR_SET_NAME`, `PR_GET_DUMPABLE`, ...) instead
+  of a raw number, and for `PR_SET_NAME` specifically, the name
+  string itself instead of a raw pointer
 - `kill`/`tkill`/`tgkill`: target signal by name (`SIGTERM` instead
   of `0xf`; the null signal `0` prints as plain `0`)
 - `lseek`: `whence` (`SEEK_SET`/`SEEK_CUR`/`SEEK_END` instead of

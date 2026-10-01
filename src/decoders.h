@@ -168,4 +168,13 @@ void format_sockopt_optname(unsigned long long level, unsigned long long optname
 void format_fdset_buf(pid_t pid, unsigned long long addr, unsigned long long nfds,
                        char *out, size_t out_size);
 
+/* prctl's option argument (PR_SET_NAME, PR_GET_DUMPABLE, ...). */
+void format_prctl_option(unsigned long long value, char *out, size_t out_size);
+
+/* prctl's arg2 for PR_SET_NAME specifically (a string); every other
+ * option leaves it as a raw address, its meaning depends on which
+ * option it is. */
+void format_prctl_name_arg(pid_t pid, unsigned long long option, unsigned long long addr,
+                            char *out, size_t out_size);
+
 #endif /* MINI_STRACE_DECODERS_H */

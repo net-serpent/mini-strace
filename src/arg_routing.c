@@ -319,6 +319,39 @@ unsigned char msg_flags_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds prctl()'s option, decoded via
+ * format_prctl_option() in decoders.c. */
+static const string_arg_entry prctl_option_arg_table[] = {
+    { "prctl", 0x01 },  /* arg 0 */
+    { NULL,    0x00 },
+};
+
+unsigned char prctl_option_arg_mask(const char *syscall) {
+    for (int i = 0; prctl_option_arg_table[i].name != NULL; i++) {
+        if (strcmp(prctl_option_arg_table[i].name, syscall) == 0)
+            return prctl_option_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+/* Which argument holds prctl()'s arg2, decoded via
+ * format_prctl_name_arg() in decoders.c. Always immediately follows
+ * option for prctl, so mini_strace.c reads raw_args[i - 1] for the
+ * option value rather than needing a separate lookup for it — same
+ * shape as sockopt_optname_arg_table above. */
+static const string_arg_entry prctl_name_arg_table[] = {
+    { "prctl", 0x02 },  /* arg 1 */
+    { NULL,    0x00 },
+};
+
+unsigned char prctl_name_arg_mask(const char *syscall) {
+    for (int i = 0; prctl_name_arg_table[i].name != NULL; i++) {
+        if (strcmp(prctl_name_arg_table[i].name, syscall) == 0)
+            return prctl_name_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which argument holds kill()/tkill()/tgkill()'s target signal
  * number, or rt_sigaction()'s signal being configured, decoded via
  * format_signal_arg() (decoders.c). rt_sigaction's sig is never the
