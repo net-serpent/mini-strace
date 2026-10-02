@@ -73,6 +73,9 @@ unsigned char fdset_arg_mask(const char *syscall);
 /* sendto/recvfrom/sendmsg/recvmsg's own flags argument. */
 unsigned char msg_flags_arg_mask(const char *syscall);
 
+/* The *at() syscalls' directory fd argument(s). */
+unsigned char dirfd_arg_mask(const char *syscall);
+
 /* prctl's option argument. */
 unsigned char prctl_option_arg_mask(const char *syscall);
 

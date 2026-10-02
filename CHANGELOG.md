@@ -43,6 +43,13 @@ on release.
   uses for its own iovecs. Both share the same array-walking code
   `sendmsg`/`recvmsg`'s `msg_iov` uses internally, now factored out
   and reused directly.
+- `*at()` syscalls (`openat`, `openat2`, `faccessat`, `unlinkat`,
+  `mkdirat`, `mknodat`, `renameat`, `newfstatat`, `statx`,
+  `readlinkat`, `fchmodat`, `fchownat`, `symlinkat`, `linkat`,
+  `utimensat`, `execveat`, ...): the directory fd argument decodes
+  `AT_FDCWD` by name instead of showing `0xffffff9c`, which was in
+  nearly every trace. Any other value is an ordinary fd and prints
+  as before, including `-y` path resolution.
 - `prctl`: `option` (`PR_SET_NAME`, `PR_GET_DUMPABLE`, `PR_SET_SECCOMP`,
   ...) instead of a raw number. For `PR_SET_NAME` specifically — by
   far the most commonly traced option, since every

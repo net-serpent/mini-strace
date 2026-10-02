@@ -44,6 +44,8 @@ bare pointer or a raw number:
   iov_len=2}, ...]`) instead of a raw buffer pointer. `readv`'s data
   is truncated to the bytes actually read, spread across the iovecs
   in order, the same convention `recvmsg` uses
+- `openat`/`newfstatat`/`unlinkat`/`statx` and the rest of the
+  `*at()` family: `dirfd` as `AT_FDCWD` instead of `0xffffff9c`
 - `prctl`: `option` (`PR_SET_NAME`, `PR_GET_DUMPABLE`, ...) instead
   of a raw number, and for `PR_SET_NAME` specifically, the name
   string itself instead of a raw pointer
@@ -105,8 +107,8 @@ names: `-e trace=file` shows only filesystem calls,
 ```
 execve("/bin/cat", ["cat", "foo.txt"], ["PATH=/usr/bin", "HOME=/root"]) = 0
 access("/etc/ld.so.preload", 0x4) = -2 (ENOENT)
-openat(0xffffff9c, "/etc/ld.so.cache", 0x80000, 0x0) = 3
-openat(0xffffff9c, "/tmp/somefile.txt", 0x0, 0x0) = 3
+openat(AT_FDCWD, "/etc/ld.so.cache", 0x80000, 0x0) = 3
+openat(AT_FDCWD, "/tmp/somefile.txt", 0x0, 0x0) = 3
 read(0x3, "test data content\n", 0x20000) = 18
 write(0x1, "test data content\n", 0x12) = 18
 read(0x3, 0x7fa474eae000, 0x20000) = 0
@@ -190,7 +192,7 @@ String and buffer arguments are truncated at 200 bytes by default
 
 ```bash
 ./mini-strace -y /bin/cat /etc/hostname
-# openat(0xffffff9c, "/etc/hostname", 0x0, 0x0) = 3
+# openat(AT_FDCWD, "/etc/hostname", 0x0, 0x0) = 3
 # read(3</etc/hostname>, "myhost\n"..., 0x20000) = 7
 ```
 

@@ -63,6 +63,13 @@ static void wrap_sockopt_optname(unsigned long long value, char *out, size_t out
     format_sockopt_optname(SOL_SOCKET, value, out, out_size);
 }
 
+/* format_dirfd takes a pid and an is_fd_arg flag too; wrapped the
+ * same way and for the same reason as format_hex_or_fd_arg above
+ * (is_fd_arg = 0 keeps it pure formatting). */
+static void wrap_dirfd(unsigned long long value, char *out, size_t out_size) {
+    format_dirfd(0, value, 0, out, out_size);
+}
+
 static uint64_t rng_state = 0x9E3779B97F4A7C15ULL;
 
 /* splitmix64 — small, dependency-free, and deterministic (same seed
@@ -160,6 +167,7 @@ int main(void) {
         { "format_ioctl_request",            format_ioctl_request },
         { "format_msg_flags",                 format_msg_flags },
         { "format_prctl_option",              format_prctl_option },
+        { "format_dirfd(is_fd_arg=0)",        wrap_dirfd },
         { "format_hex_or_fd_arg(is_fd_arg=0)", wrap_hex_or_fd_arg },
     };
     size_t num_decoders = sizeof(decoders) / sizeof(decoders[0]);

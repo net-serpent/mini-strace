@@ -467,6 +467,36 @@ leaving their unused/non-pointer arg2 as raw hex, confirming the
 `PR_SET_NAME`-only gate inside `format_prctl_name_arg()` actually
 discriminates rather than treating every option as a string.
 
+## *at() dirfd and AT_FDCWD
+
+Every `*at()` syscall's first path argument is relative to a
+directory fd, and by far the most common value is `AT_FDCWD` (-100),
+which used to print as `0xffffff9c` in nearly every line of every
+trace. `format_dirfd()` prints `AT_FDCWD` for it and otherwise defers
+to `format_hex_or_fd_arg()`, so a real directory fd (and `-y` path
+resolution of it) behaves exactly as before.
+
+The comparison uses only the low 32 bits of the raw register value:
+`AT_FDCWD` is an `int`, and one architecture zero-extends it into the
+64-bit register while the other sign-extends it, so comparing the
+whole register would match on only one of them.
+
+This is a separate table (`dirfd_arg_table`) from `fd_arg_table`, not
+a reuse of it: `fd_arg_table` only applies under `-y`, while
+`AT_FDCWD` decoding is unconditional, and `fd_arg_table` also lists
+many arguments that are plain fds rather than dirfds. Two syscalls
+have two dirfd slots (`renameat`/`renameat2`/`linkat`: arguments 0 and
+2), `symlinkat`'s is argument 1.
+
+Routing hit the usual always-deferred trap for `newfstatat` and
+`statx`: both are routed through the deferred exit-stop path for
+their kernel-populated struct, so their dirfd never reaches the
+entry-stop dispatch and needs its own mask computed in the deferred
+loop, as `msg_flags_mask` does for `recvfrom`/`recvmsg`. The
+regression test exercises `newfstatat` specifically to prove that
+path is reached. The `*at()` flags arguments (`AT_SYMLINK_NOFOLLOW`,
+`AT_REMOVEDIR`, `AT_EMPTY_PATH`, ...) are not decoded yet.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

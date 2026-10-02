@@ -20,6 +20,11 @@
 void format_hex_or_fd_arg(pid_t pid, unsigned long long raw, int is_fd_arg,
                            char *out, size_t out_size);
 
+/* The directory-fd argument of the *at() syscalls: AT_FDCWD by name,
+ * anything else formatted exactly like format_hex_or_fd_arg(). */
+void format_dirfd(pid_t pid, unsigned long long raw, int is_fd_arg,
+                   char *out, size_t out_size);
+
 /* Decodes a struct sockaddr argument (connect/bind/sendto/accept/
  * getsockname/getpeername/recvfrom) into something readable instead
  * of a raw pointer — AF_INET/AF_INET6/AF_UNIX are decoded, anything

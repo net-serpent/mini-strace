@@ -568,6 +568,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char msg_flags_mask = msg_flags_arg_mask(name);
                     unsigned char prctl_option_mask = prctl_option_arg_mask(name);
                     unsigned char prctl_name_mask = prctl_name_arg_mask(name);
+                    unsigned char dirfd_mask = dirfd_arg_mask(name);
                     unsigned char signal_mask = signal_arg_mask(name);
                     unsigned char lseek_whence_mask = lseek_whence_arg_mask(name);
                     unsigned char fcntl_cmd_mask = fcntl_cmd_arg_mask(name);
@@ -618,6 +619,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_prctl_option(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (prctl_name_mask & (1 << i))
                             format_prctl_name_arg(wpid, raw_args[i - 1], raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (dirfd_mask & (1 << i))
+                            format_dirfd(wpid, raw_args[i], fd_mask & (1 << i), argbuf[i], sizeof(argbuf[i]));
                         else if (signal_mask & (1 << i))
                             format_signal_arg(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (lseek_whence_mask & (1 << i))
@@ -752,6 +755,11 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                          * dispatch (only sendto/sendmsg do) and need
                          * their own mask here instead. */
                         unsigned char msg_flags_mask = msg_flags_arg_mask(ts->pending_name);
+                        /* newfstatat and statx are always deferred (their
+                         * struct stat/statx is kernel-populated), so —
+                         * same reasoning as msg_flags_mask — their dirfd
+                         * only ever gets decoded from this loop. */
+                        unsigned char dirfd_mask = dirfd_arg_mask(ts->pending_name);
 
                         /* the socklen_t the kernel wrote the real
                          * sockaddr size into is itself only valid now,
@@ -785,6 +793,9 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_statx_mask(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (msg_flags_mask & (1 << i))
                                 format_msg_flags(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (dirfd_mask & (1 << i))
+                                format_dirfd(wpid, ts->pending_args[i], fd_mask & (1 << i),
+                                              argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_read_entry != NULL &&
                                 i == ts->pending_read_entry->buf_idx && ret > 0)
                                 read_child_buffer(wpid, ts->pending_args[i], (unsigned long long)ret,

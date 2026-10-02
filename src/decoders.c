@@ -60,6 +60,21 @@ void format_hex_or_fd_arg(pid_t pid, unsigned long long raw, int is_fd_arg,
     snprintf(out, out_size, "0x%llx", raw);
 }
 
+/* The directory-fd argument of the *at() syscalls (openat, newfstatat,
+ * unlinkat, ...). AT_FDCWD is -100 as a 32-bit int, but the raw
+ * register value is zero-extended on one architecture and
+ * sign-extended on the other, so only the low 32 bits are compared.
+ * Anything else is an ordinary fd and goes through the same
+ * hex-or-resolved-path formatting every other fd argument gets. */
+void format_dirfd(pid_t pid, unsigned long long raw, int is_fd_arg,
+                   char *out, size_t out_size) {
+    if ((int)(unsigned int)raw == AT_FDCWD) {
+        snprintf(out, out_size, "AT_FDCWD");
+        return;
+    }
+    format_hex_or_fd_arg(pid, raw, is_fd_arg, out, out_size);
+}
+
 /* Decodes a struct sockaddr argument (connect/bind/sendto) into
  * something readable instead of a raw pointer. sa_family is always
  * host-endian; sin_port/sin_addr inside sockaddr_in (and sin6_port

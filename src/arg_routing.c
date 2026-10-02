@@ -128,6 +128,44 @@ unsigned char fd_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which arguments are the directory fd of an *at() syscall, decoded
+ * via format_dirfd() (AT_FDCWD by name). Independent of fd_arg_table
+ * above: that one only applies under -y, while AT_FDCWD is shown
+ * unconditionally. Some syscalls have two (renameat's olddirfd and
+ * newdirfd). */
+static const string_arg_entry dirfd_arg_table[] = {
+    { "openat",            0x01 },
+    { "openat2",           0x01 },
+    { "faccessat",         0x01 },
+    { "faccessat2",        0x01 },
+    { "unlinkat",          0x01 },
+    { "mkdirat",           0x01 },
+    { "mknodat",           0x01 },
+    { "renameat",          0x05 },  /* args 0 and 2 */
+    { "renameat2",         0x05 },
+    { "newfstatat",        0x01 },
+    { "statx",             0x01 },
+    { "readlinkat",        0x01 },
+    { "fchmodat",          0x01 },
+    { "fchmodat2",         0x01 },
+    { "fchownat",          0x01 },
+    { "symlinkat",         0x02 },  /* arg 1 (newdirfd) */
+    { "linkat",            0x05 },  /* args 0 and 2 */
+    { "futimesat",         0x01 },
+    { "utimensat",         0x01 },
+    { "execveat",          0x01 },
+    { "name_to_handle_at", 0x01 },
+    { NULL,                0x00 },
+};
+
+unsigned char dirfd_arg_mask(const char *syscall) {
+    for (int i = 0; dirfd_arg_table[i].name != NULL; i++) {
+        if (strcmp(dirfd_arg_table[i].name, syscall) == 0)
+            return dirfd_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which arguments are argv[]/envp[]-style NULL-terminated arrays of
  * C-string pointers — just execve/execveat's argv and envp today.
  * Same bitmask-over-slots-0-5 shape as string_arg_table; read via

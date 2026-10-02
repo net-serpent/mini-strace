@@ -1051,6 +1051,40 @@ check_contains "prctl decodes PR_GET_DUMPABLE, leaving its unused arg2 as raw he
 check_contains "prctl decodes PR_SET_DUMPABLE, leaving its 0/1 arg2 as raw hex" \
     'prctl\(PR_SET_DUMPABLE, 0x1,' "$out"
 
+echo "=== *at() dirfd AT_FDCWD decoding ==="
+cat >/tmp/mini_strace_test_dirfd.c <<'EOF'
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+int main(void) {
+    int fd = openat(AT_FDCWD, "/etc/hostname", O_RDONLY);
+    close(fd);
+
+    int dfd = open("/etc", O_RDONLY | O_DIRECTORY);
+    int fd2 = openat(dfd, "hostname", O_RDONLY);
+    close(fd2);
+    close(dfd);
+
+    struct stat st;
+    fstatat(AT_FDCWD, "/etc/hostname", &st, 0);
+
+    unlinkat(AT_FDCWD, "/tmp/mini_strace_dirfd_nonexistent", 0);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_dirfd /tmp/mini_strace_test_dirfd.c
+out=$($STRACE /tmp/mini_strace_test_dirfd 2>&1)
+check_contains "openat decodes AT_FDCWD by name" \
+    'openat\(AT_FDCWD, "/etc/hostname"' "$out"
+check_contains "openat leaves a real directory fd as a number" \
+    'openat\(0x[0-9a-f]+, "hostname"' "$out"
+check_contains "newfstatat's dirfd decodes AT_FDCWD from the deferred path (as newfstatat or statx)" \
+    '(newfstatat|statx)\(AT_FDCWD, "/etc/hostname"' "$out"
+check_contains "unlinkat decodes AT_FDCWD by name" \
+    'unlinkat\(AT_FDCWD, "/tmp/mini_strace_dirfd_nonexistent"' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!
