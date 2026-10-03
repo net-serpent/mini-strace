@@ -46,6 +46,10 @@ bare pointer or a raw number:
   in order, the same convention `recvmsg` uses
 - `openat`/`newfstatat`/`unlinkat`/`statx` and the rest of the
   `*at()` family: `dirfd` as `AT_FDCWD` instead of `0xffffff9c`
+- `newfstatat`/`statx`/`unlinkat`/`linkat`/`faccessat2`/`fchownat`/
+  `utimensat`/`execveat`: the `AT_*` flags argument
+  (`AT_SYMLINK_NOFOLLOW`, `AT_REMOVEDIR`, `AT_EMPTY_PATH`, ...)
+  instead of a raw number
 - `prctl`: `option` (`PR_SET_NAME`, `PR_GET_DUMPABLE`, ...) instead
   of a raw number, and for `PR_SET_NAME` specifically, the name
   string itself instead of a raw pointer

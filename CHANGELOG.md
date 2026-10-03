@@ -50,6 +50,13 @@ on release.
   `AT_FDCWD` by name instead of showing `0xffffff9c`, which was in
   nearly every trace. Any other value is an ordinary fd and prints
   as before, including `-y` path resolution.
+- `newfstatat`/`statx`/`unlinkat`/`linkat`/`faccessat2`/`fchownat`/
+  `fchmodat2`/`utimensat`/`execveat`: the `AT_*` flags argument
+  (`AT_SYMLINK_NOFOLLOW`, `AT_SYMLINK_FOLLOW`, `AT_EMPTY_PATH`,
+  `AT_NO_AUTOMOUNT`, `AT_STATX_*`, `AT_RECURSIVE`) instead of a raw
+  number. Bit `0x200` is `AT_REMOVEDIR` for `unlinkat` and
+  `AT_EACCESS` for `faccessat2`, so those two decode it by their own
+  name; for every other syscall it stays hex.
 - `prctl`: `option` (`PR_SET_NAME`, `PR_GET_DUMPABLE`, `PR_SET_SECCOMP`,
   ...) instead of a raw number. For `PR_SET_NAME` specifically — by
   far the most commonly traced option, since every

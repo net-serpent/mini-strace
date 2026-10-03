@@ -173,6 +173,14 @@ void format_sockopt_optname(unsigned long long level, unsigned long long optname
 void format_fdset_buf(pid_t pid, unsigned long long addr, unsigned long long nfds,
                        char *out, size_t out_size);
 
+/* The AT_* flags argument of the *at() syscalls (AT_SYMLINK_NOFOLLOW,
+ * AT_EMPTY_PATH, ...). Bit 0x200 is AT_REMOVEDIR for unlinkat and
+ * AT_EACCESS for faccessat2, so those two get their own variants;
+ * format_at_flags() leaves it as hex for everything else. */
+void format_at_flags(unsigned long long value, char *out, size_t out_size);
+void format_unlinkat_flags(unsigned long long value, char *out, size_t out_size);
+void format_faccessat_flags(unsigned long long value, char *out, size_t out_size);
+
 /* prctl's option argument (PR_SET_NAME, PR_GET_DUMPABLE, ...). */
 void format_prctl_option(unsigned long long value, char *out, size_t out_size);
 

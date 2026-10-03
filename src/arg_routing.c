@@ -166,6 +166,57 @@ unsigned char dirfd_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Which argument holds the AT_* flags of an *at() syscall, decoded
+ * via format_at_flags() (decoders.c). unlinkat and faccessat2 are in
+ * their own tables because bit 0x200 means AT_REMOVEDIR for one and
+ * AT_EACCESS for the other. faccessat and fchmodat have no flags
+ * argument at the syscall level (glibc emulates theirs in userspace),
+ * so they aren't listed. */
+static const string_arg_entry at_flags_arg_table[] = {
+    { "newfstatat",  0x08 },  /* arg 3 */
+    { "statx",       0x04 },  /* arg 2 */
+    { "linkat",      0x10 },  /* arg 4 */
+    { "utimensat",   0x08 },  /* arg 3 */
+    { "fchmodat2",   0x08 },  /* arg 3 */
+    { "fchownat",    0x10 },  /* arg 4 */
+    { "execveat",    0x10 },  /* arg 4 */
+    { NULL,          0x00 },
+};
+
+unsigned char at_flags_arg_mask(const char *syscall) {
+    for (int i = 0; at_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(at_flags_arg_table[i].name, syscall) == 0)
+            return at_flags_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+static const string_arg_entry unlinkat_flags_arg_table[] = {
+    { "unlinkat", 0x04 },  /* arg 2 */
+    { NULL,       0x00 },
+};
+
+unsigned char unlinkat_flags_arg_mask(const char *syscall) {
+    for (int i = 0; unlinkat_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(unlinkat_flags_arg_table[i].name, syscall) == 0)
+            return unlinkat_flags_arg_table[i].str_args;
+    }
+    return 0;
+}
+
+static const string_arg_entry faccessat_flags_arg_table[] = {
+    { "faccessat2", 0x08 },  /* arg 3 */
+    { NULL,         0x00 },
+};
+
+unsigned char faccessat_flags_arg_mask(const char *syscall) {
+    for (int i = 0; faccessat_flags_arg_table[i].name != NULL; i++) {
+        if (strcmp(faccessat_flags_arg_table[i].name, syscall) == 0)
+            return faccessat_flags_arg_table[i].str_args;
+    }
+    return 0;
+}
+
 /* Which arguments are argv[]/envp[]-style NULL-terminated arrays of
  * C-string pointers — just execve/execveat's argv and envp today.
  * Same bitmask-over-slots-0-5 shape as string_arg_table; read via

@@ -1985,3 +1985,83 @@ void format_prctl_name_arg(pid_t pid, unsigned long long option, unsigned long l
     }
     snprintf(out, out_size, "0x%llx", addr);
 }
+
+/* The AT_* flags argument of the *at() syscalls: an OR-of-bits walk
+ * like every other flags argument here. The values are the kernel's
+ * fixed ABI, so they get fallback definitions instead of depending on
+ * which of them a given libc header happens to expose (AT_EMPTY_PATH
+ * needs _GNU_SOURCE, the AT_STATX_* ones come from different headers
+ * across glibc versions). 0 is a real value (no flags), printed as
+ * such.
+ *
+ * Bit 0x200 means different things depending on the syscall:
+ * AT_REMOVEDIR for unlinkat, AT_EACCESS for faccessat2, and nothing
+ * for the rest. A single table can't name it correctly for all of
+ * them, so the shared walker takes the name (or NULL) for that one
+ * bit and each syscall class gets its own public wrapper. */
+#ifndef AT_SYMLINK_NOFOLLOW
+#define AT_SYMLINK_NOFOLLOW 0x100
+#endif
+#ifndef AT_SYMLINK_FOLLOW
+#define AT_SYMLINK_FOLLOW 0x400
+#endif
+#ifndef AT_NO_AUTOMOUNT
+#define AT_NO_AUTOMOUNT 0x800
+#endif
+#ifndef AT_EMPTY_PATH
+#define AT_EMPTY_PATH 0x1000
+#endif
+#ifndef AT_STATX_FORCE_SYNC
+#define AT_STATX_FORCE_SYNC 0x2000
+#endif
+#ifndef AT_STATX_DONT_SYNC
+#define AT_STATX_DONT_SYNC 0x4000
+#endif
+#ifndef AT_RECURSIVE
+#define AT_RECURSIVE 0x8000
+#endif
+
+static const flag_entry at_flag_table[] = {
+    { AT_SYMLINK_NOFOLLOW,  "AT_SYMLINK_NOFOLLOW" },
+    { AT_SYMLINK_FOLLOW,    "AT_SYMLINK_FOLLOW" },
+    { AT_NO_AUTOMOUNT,      "AT_NO_AUTOMOUNT" },
+    { AT_EMPTY_PATH,        "AT_EMPTY_PATH" },
+    { AT_STATX_FORCE_SYNC,  "AT_STATX_FORCE_SYNC" },
+    { AT_STATX_DONT_SYNC,   "AT_STATX_DONT_SYNC" },
+    { AT_RECURSIVE,         "AT_RECURSIVE" },
+    { 0,                    NULL },
+};
+
+static void format_at_flags_walk(unsigned long long value, const char *bit200_name,
+                                  char *out, size_t out_size) {
+    if (value == 0) {
+        snprintf(out, out_size, "0");
+        return;
+    }
+    unsigned long long remaining = value;
+    size_t oi = 0;
+    if (bit200_name != NULL && (remaining & 0x200) && oi < out_size) {
+        oi += (size_t)snprintf(out + oi, out_size - oi, "%s", bit200_name);
+        remaining &= ~0x200ULL;
+    }
+    for (int i = 0; at_flag_table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & at_flag_table[i].value) == at_flag_table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", at_flag_table[i].name);
+            remaining &= ~(unsigned long long)at_flag_table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+void format_at_flags(unsigned long long value, char *out, size_t out_size) {
+    format_at_flags_walk(value, NULL, out, out_size);
+}
+
+void format_unlinkat_flags(unsigned long long value, char *out, size_t out_size) {
+    format_at_flags_walk(value, "AT_REMOVEDIR", out, out_size);
+}
+
+void format_faccessat_flags(unsigned long long value, char *out, size_t out_size) {
+    format_at_flags_walk(value, "AT_EACCESS", out, out_size);
+}

@@ -168,6 +168,9 @@ int main(void) {
         { "format_msg_flags",                 format_msg_flags },
         { "format_prctl_option",              format_prctl_option },
         { "format_dirfd(is_fd_arg=0)",        wrap_dirfd },
+        { "format_at_flags",                  format_at_flags },
+        { "format_unlinkat_flags",            format_unlinkat_flags },
+        { "format_faccessat_flags",           format_faccessat_flags },
         { "format_hex_or_fd_arg(is_fd_arg=0)", wrap_hex_or_fd_arg },
     };
     size_t num_decoders = sizeof(decoders) / sizeof(decoders[0]);

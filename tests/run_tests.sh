@@ -1085,6 +1085,42 @@ check_contains "newfstatat's dirfd decodes AT_FDCWD from the deferred path (as n
 check_contains "unlinkat decodes AT_FDCWD by name" \
     'unlinkat\(AT_FDCWD, "/tmp/mini_strace_dirfd_nonexistent"' "$out"
 
+echo "=== *at() AT_* flags decoding ==="
+cat >/tmp/mini_strace_test_atflags.c <<'EOF'
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#ifndef SYS_faccessat2
+#define SYS_faccessat2 439
+#endif
+
+int main(void) {
+    struct stat st;
+    fstatat(AT_FDCWD, "/etc/hostname", &st, AT_SYMLINK_NOFOLLOW);
+
+    unlinkat(AT_FDCWD, "/tmp/mini_strace_atflags_nonexistent_dir", AT_REMOVEDIR);
+
+    syscall(SYS_faccessat2, AT_FDCWD, "/etc/hostname", R_OK, AT_EACCESS);
+
+    linkat(AT_FDCWD, "/tmp/mini_strace_atflags_a", AT_FDCWD,
+           "/tmp/mini_strace_atflags_b", AT_SYMLINK_FOLLOW | AT_EMPTY_PATH);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_atflags /tmp/mini_strace_test_atflags.c
+out=$($STRACE /tmp/mini_strace_test_atflags 2>&1)
+check_contains "newfstatat's flags decode AT_SYMLINK_NOFOLLOW from the deferred path (as newfstatat or statx)" \
+    '(newfstatat|statx)\(.*AT_SYMLINK_NOFOLLOW' "$out"
+check_contains "unlinkat's bit 0x200 decodes as AT_REMOVEDIR" \
+    'unlinkat\(AT_FDCWD, "[^"]*", AT_REMOVEDIR\)' "$out"
+check_contains "faccessat2's bit 0x200 decodes as AT_EACCESS, not AT_REMOVEDIR" \
+    'faccessat2\(AT_FDCWD, "/etc/hostname", R_OK, AT_EACCESS\)' "$out"
+check_contains "linkat decodes a combined AT_SYMLINK_FOLLOW|AT_EMPTY_PATH" \
+    'linkat\(AT_FDCWD, "[^"]*", AT_FDCWD, "[^"]*", AT_SYMLINK_FOLLOW\|AT_EMPTY_PATH\)' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

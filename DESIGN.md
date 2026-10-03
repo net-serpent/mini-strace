@@ -494,8 +494,39 @@ their kernel-populated struct, so their dirfd never reaches the
 entry-stop dispatch and needs its own mask computed in the deferred
 loop, as `msg_flags_mask` does for `recvfrom`/`recvmsg`. The
 regression test exercises `newfstatat` specifically to prove that
-path is reached. The `*at()` flags arguments (`AT_SYMLINK_NOFOLLOW`,
-`AT_REMOVEDIR`, `AT_EMPTY_PATH`, ...) are not decoded yet.
+path is reached.
+
+## *at() AT_* flags
+
+The flags argument is an OR-of-bits walk like every other flags
+argument, with one wrinkle: bit `0x200` is `AT_REMOVEDIR` for
+`unlinkat` but `AT_EACCESS` for `faccessat2`, and means nothing for
+the rest. A single shared table cannot name it correctly for all of
+them, so the walker takes the name for that one bit as a parameter
+(NULL leaves it to the hex remainder) and there are three public
+decoders: `format_at_flags()` (generic), `format_unlinkat_flags()`
+and `format_faccessat_flags()`. Each has its own routing table in
+`arg_routing.c`; the argument position differs per syscall (index 2
+for `unlinkat`/`statx`, 3 for `newfstatat`/`utimensat`/`faccessat2`/
+`fchmodat2`, 4 for `linkat`/`fchownat`/`execveat`), which is why it is
+a per-syscall mask table rather than a fixed index.
+
+`faccessat` and `fchmodat` are deliberately absent: the kernel
+syscalls of those names take no flags argument, glibc emulates theirs
+in userspace, so there is nothing at the syscall level to decode.
+`renameat2`'s flags are `RENAME_*`, a different namespace, and are
+left for a separate round.
+
+The constants have fallback `#define`s: they are fixed kernel ABI
+values, and which of them a libc header exposes varies (`AT_EMPTY_PATH`
+needs `_GNU_SOURCE`, the `AT_STATX_*` ones live in different headers
+across glibc versions).
+
+Routing: `newfstatat` and `statx` take the deferred path, so the
+generic flags mask is computed in the deferred loop as well as the
+entry-stop chain (`unlinkat` and `faccessat2` have no deferred
+argument and only need the entry-stop). All three decoders are pure
+and are in the property-test harness.
 
 ## kill/tkill/tgkill signal number
 

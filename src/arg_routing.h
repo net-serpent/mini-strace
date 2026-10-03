@@ -76,6 +76,12 @@ unsigned char msg_flags_arg_mask(const char *syscall);
 /* The *at() syscalls' directory fd argument(s). */
 unsigned char dirfd_arg_mask(const char *syscall);
 
+/* The *at() syscalls' AT_* flags argument. unlinkat and faccessat2
+ * are separate because bit 0x200 is named differently for each. */
+unsigned char at_flags_arg_mask(const char *syscall);
+unsigned char unlinkat_flags_arg_mask(const char *syscall);
+unsigned char faccessat_flags_arg_mask(const char *syscall);
+
 /* prctl's option argument. */
 unsigned char prctl_option_arg_mask(const char *syscall);
 
