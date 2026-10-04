@@ -50,6 +50,12 @@ bare pointer or a raw number:
   `utimensat`/`execveat`: the `AT_*` flags argument
   (`AT_SYMLINK_NOFOLLOW`, `AT_REMOVEDIR`, `AT_EMPTY_PATH`, ...)
   instead of a raw number
+- `futex`: `op` as the command plus its flag bits
+  (`FUTEX_WAIT_BITSET|FUTEX_PRIVATE_FLAG|FUTEX_CLOCK_REALTIME`)
+- `madvise`: `advice` (`MADV_DONTNEED`, `MADV_HUGEPAGE`, ...)
+- `flock`: the operation (`LOCK_EX|LOCK_NB`, `LOCK_UN`, ...)
+- `getrandom`/`pipe2`: flags (`GRND_NONBLOCK`,
+  `O_CLOEXEC|O_NONBLOCK`) instead of a raw number
 - `prctl`: `option` (`PR_SET_NAME`, `PR_GET_DUMPABLE`, ...) instead
   of a raw number, and for `PR_SET_NAME` specifically, the name
   string itself instead of a raw pointer

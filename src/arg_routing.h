@@ -82,6 +82,14 @@ unsigned char at_flags_arg_mask(const char *syscall);
 unsigned char unlinkat_flags_arg_mask(const char *syscall);
 unsigned char faccessat_flags_arg_mask(const char *syscall);
 
+/* pipe2's flags, getrandom's flags, flock's operation, madvise's
+ * advice, futex's op. */
+unsigned char pipe2_flags_arg_mask(const char *syscall);
+unsigned char getrandom_flags_arg_mask(const char *syscall);
+unsigned char flock_op_arg_mask(const char *syscall);
+unsigned char madvise_advice_arg_mask(const char *syscall);
+unsigned char futex_op_arg_mask(const char *syscall);
+
 /* prctl's option argument. */
 unsigned char prctl_option_arg_mask(const char *syscall);
 

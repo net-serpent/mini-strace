@@ -57,6 +57,15 @@ on release.
   number. Bit `0x200` is `AT_REMOVEDIR` for `unlinkat` and
   `AT_EACCESS` for `faccessat2`, so those two decode it by their own
   name; for every other syscall it stays hex.
+- `futex`: `op` decodes as the command (`FUTEX_WAIT`, `FUTEX_WAKE`,
+  `FUTEX_LOCK_PI`, ...) with `FUTEX_PRIVATE_FLAG` and
+  `FUTEX_CLOCK_REALTIME` appended, instead of a raw number. Present
+  in essentially every multi-threaded trace.
+- `madvise`: `advice` by name (`MADV_DONTNEED`, `MADV_HUGEPAGE`, ...).
+- `flock`: the operation (`LOCK_SH`, `LOCK_EX|LOCK_NB`, `LOCK_UN`).
+- `getrandom`: flags (`GRND_NONBLOCK`, `GRND_RANDOM`, `GRND_INSECURE`).
+- `pipe2`: flags (`O_CLOEXEC`, `O_NONBLOCK`, `O_DIRECT`), without the
+  access-mode prefix `open`'s flags decoder always prints.
 - `prctl`: `option` (`PR_SET_NAME`, `PR_GET_DUMPABLE`, `PR_SET_SECCOMP`,
   ...) instead of a raw number. For `PR_SET_NAME` specifically — by
   far the most commonly traced option, since every

@@ -528,6 +528,40 @@ entry-stop chain (`unlinkat` and `faccessat2` have no deferred
 argument and only need the entry-stop). All three decoders are pure
 and are in the property-test harness.
 
+## futex, madvise, flock, getrandom, pipe2
+
+Five single-argument decoders added together because none needs any
+new machinery: each is one argument of an otherwise-undecoded
+syscall, none has a kernel-populated argument this project decodes,
+so all five take the entry-stop's immediate dispatch only and none
+touches the deferred path or `tracee_state`.
+
+`futex`'s op is the one with structure. It is an enum command in the
+low bits ORed with two flag bits (`FUTEX_PRIVATE_FLAG`,
+`FUTEX_CLOCK_REALTIME`), so a plain bit walk would be wrong: the
+command is split off with the same mask the kernel uses (everything
+except those two bits), looked up by exact match, and the flags are
+appended by name. An unknown command falls back to hex for just that
+part and keeps the flags readable.
+
+`pipe2`'s flags deliberately do not reuse `format_open_flags()`: it
+always prints an `O_RDONLY`/`O_WRONLY`/`O_RDWR` access mode first,
+and a pipe has none, so `O_CLOEXEC` would have rendered as
+`O_RDONLY|O_CLOEXEC`. `pipe2`, `getrandom` and `flock` share one
+small static walker, `format_flag_table_value()`, where 0 is a real
+value printed as `0` and unknown bits survive as a hex remainder.
+`flock`'s `LOCK_EX|LOCK_NB` needs no special handling: `LOCK_NB` is an
+independent bit.
+
+`madvise`'s advice is a plain enum lookup, with the newer values
+guarded by `#ifdef` like the other tables that must build against
+older headers. The `GRND_*` constants have fallback definitions
+because the header that provides them varies across glibc versions.
+`futex` is not in `syscall_argc_table`: it falls back to printing
+all six slots, which is its real arity anyway.
+
+All five decoders are pure and are in the property-test harness.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

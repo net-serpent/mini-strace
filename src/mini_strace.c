@@ -569,6 +569,11 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char prctl_option_mask = prctl_option_arg_mask(name);
                     unsigned char prctl_name_mask = prctl_name_arg_mask(name);
                     unsigned char dirfd_mask = dirfd_arg_mask(name);
+                    unsigned char pipe2_flags_mask = pipe2_flags_arg_mask(name);
+                    unsigned char getrandom_flags_mask = getrandom_flags_arg_mask(name);
+                    unsigned char flock_op_mask = flock_op_arg_mask(name);
+                    unsigned char madvise_advice_mask = madvise_advice_arg_mask(name);
+                    unsigned char futex_op_mask = futex_op_arg_mask(name);
                     unsigned char at_flags_mask = at_flags_arg_mask(name);
                     unsigned char unlinkat_flags_mask = unlinkat_flags_arg_mask(name);
                     unsigned char faccessat_flags_mask = faccessat_flags_arg_mask(name);
@@ -624,6 +629,16 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_prctl_name_arg(wpid, raw_args[i - 1], raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (dirfd_mask & (1 << i))
                             format_dirfd(wpid, raw_args[i], fd_mask & (1 << i), argbuf[i], sizeof(argbuf[i]));
+                        else if (pipe2_flags_mask & (1 << i))
+                            format_pipe2_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (getrandom_flags_mask & (1 << i))
+                            format_getrandom_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (flock_op_mask & (1 << i))
+                            format_flock_op(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (madvise_advice_mask & (1 << i))
+                            format_madvise_advice(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (futex_op_mask & (1 << i))
+                            format_futex_op(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (at_flags_mask & (1 << i))
                             format_at_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (unlinkat_flags_mask & (1 << i))

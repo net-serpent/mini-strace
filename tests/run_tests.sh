@@ -1121,6 +1121,56 @@ check_contains "faccessat2's bit 0x200 decodes as AT_EACCESS, not AT_REMOVEDIR" 
 check_contains "linkat decodes a combined AT_SYMLINK_FOLLOW|AT_EMPTY_PATH" \
     'linkat\(AT_FDCWD, "[^"]*", AT_FDCWD, "[^"]*", AT_SYMLINK_FOLLOW\|AT_EMPTY_PATH\)' "$out"
 
+echo "=== futex/madvise/flock/getrandom/pipe2 argument decoding ==="
+cat >/tmp/mini_strace_test_smallargs.c <<'EOF'
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <linux/futex.h>
+#include <sys/file.h>
+#include <sys/mman.h>
+#include <sys/random.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+int main(void) {
+    int p[2];
+    pipe2(p, O_CLOEXEC | O_NONBLOCK);
+
+    char rnd[8];
+    getrandom(rnd, sizeof(rnd), GRND_NONBLOCK);
+
+    int fd = open("/etc/hostname", O_RDONLY);
+    flock(fd, LOCK_SH);
+    flock(fd, LOCK_EX | LOCK_NB);
+    flock(fd, LOCK_UN);
+
+    void *page = mmap(0, 4096, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    madvise(page, 4096, MADV_DONTNEED);
+
+    int word = 0;
+    syscall(SYS_futex, &word, FUTEX_WAKE_PRIVATE, 1, 0, 0, 0);
+    syscall(SYS_futex, &word, FUTEX_WAIT_BITSET | FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME,
+            1, 0, 0, FUTEX_BITSET_MATCH_ANY);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_smallargs /tmp/mini_strace_test_smallargs.c
+out=$($STRACE /tmp/mini_strace_test_smallargs 2>&1)
+check_contains "pipe2 decodes its flags without an access mode" \
+    'pipe2\([^,]*, O_NONBLOCK\|O_CLOEXEC\)|pipe2\([^,]*, O_CLOEXEC\|O_NONBLOCK\)' "$out"
+check_contains "getrandom decodes GRND_NONBLOCK" \
+    'getrandom\([^,]*, 0x8, GRND_NONBLOCK\)' "$out"
+check_contains "flock decodes LOCK_SH" 'flock\([^,]*, LOCK_SH\)' "$out"
+check_contains "flock decodes LOCK_EX|LOCK_NB" 'flock\([^,]*, LOCK_EX\|LOCK_NB\)' "$out"
+check_contains "flock decodes LOCK_UN" 'flock\([^,]*, LOCK_UN\)' "$out"
+check_contains "madvise decodes MADV_DONTNEED" \
+    'madvise\([^,]*, 0x1000, MADV_DONTNEED\)' "$out"
+check_contains "futex decodes a command plus FUTEX_PRIVATE_FLAG" \
+    'futex\([^,]*, FUTEX_WAKE\|FUTEX_PRIVATE_FLAG,' "$out"
+check_contains "futex decodes a command plus both flag bits" \
+    'futex\([^,]*, FUTEX_WAIT_BITSET\|FUTEX_PRIVATE_FLAG\|FUTEX_CLOCK_REALTIME,' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

@@ -25,6 +25,8 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/prctl.h>
+#include <sys/file.h>
+#include <linux/futex.h>
 
 #include "decoders.h"
 #include "child_mem.h"
@@ -2064,4 +2066,184 @@ void format_unlinkat_flags(unsigned long long value, char *out, size_t out_size)
 
 void format_faccessat_flags(unsigned long long value, char *out, size_t out_size) {
     format_at_flags_walk(value, "AT_EACCESS", out, out_size);
+}
+
+/* Shared OR-of-bits walk for the small flags arguments below
+ * (pipe2, getrandom, flock): every bit in the table is an
+ * independent flag, 0 is a real value (no flags) and prints as such,
+ * and any bit the table doesn't know about is kept as a hex
+ * remainder rather than dropped. */
+static void format_flag_table_value(const flag_entry *table, unsigned long long value,
+                                     char *out, size_t out_size) {
+    if (value == 0) {
+        snprintf(out, out_size, "0");
+        return;
+    }
+    unsigned long long remaining = value;
+    size_t oi = 0;
+    for (int i = 0; table[i].name != NULL && oi < out_size; i++) {
+        if ((remaining & table[i].value) == table[i].value) {
+            oi += (size_t)snprintf(out + oi, out_size - oi, "%s%s", oi ? "|" : "", table[i].name);
+            remaining &= ~(unsigned long long)table[i].value;
+        }
+    }
+    if (remaining != 0 && oi < out_size)
+        snprintf(out + oi, out_size - oi, "%s0x%llx", oi ? "|" : "", remaining);
+}
+
+/* pipe2()'s flags: only O_CLOEXEC, O_NONBLOCK and O_DIRECT (packet
+ * mode) are valid. Not format_open_flags(): that always prints an
+ * O_RDONLY/O_WRONLY/O_RDWR access mode first, which pipe2 has none
+ * of. */
+static const flag_entry pipe2_flag_table[] = {
+    { O_CLOEXEC,  "O_CLOEXEC" },
+    { O_NONBLOCK, "O_NONBLOCK" },
+    { O_DIRECT,   "O_DIRECT" },
+    { 0,          NULL },
+};
+
+void format_pipe2_flags(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(pipe2_flag_table, value, out, out_size);
+}
+
+#ifndef GRND_NONBLOCK
+#define GRND_NONBLOCK 0x0001
+#endif
+#ifndef GRND_RANDOM
+#define GRND_RANDOM 0x0002
+#endif
+#ifndef GRND_INSECURE
+#define GRND_INSECURE 0x0004
+#endif
+
+static const flag_entry getrandom_flag_table[] = {
+    { GRND_NONBLOCK, "GRND_NONBLOCK" },
+    { GRND_RANDOM,   "GRND_RANDOM" },
+    { GRND_INSECURE, "GRND_INSECURE" },
+    { 0,             NULL },
+};
+
+void format_getrandom_flags(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(getrandom_flag_table, value, out, out_size);
+}
+
+/* flock()'s operation: one of LOCK_SH/LOCK_EX/LOCK_UN, optionally
+ * with LOCK_NB, so a plain bit walk gives the right "LOCK_EX|LOCK_NB". */
+static const flag_entry flock_op_table[] = {
+    { LOCK_SH, "LOCK_SH" },
+    { LOCK_EX, "LOCK_EX" },
+    { LOCK_UN, "LOCK_UN" },
+    { LOCK_NB, "LOCK_NB" },
+    { 0,       NULL },
+};
+
+void format_flock_op(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(flock_op_table, value, out, out_size);
+}
+
+/* madvise()'s advice: a plain enum lookup, not bits to OR. Newer
+ * values are guarded for headers that predate them. */
+static const flag_entry madvise_advice_table[] = {
+    { MADV_NORMAL,      "MADV_NORMAL" },
+    { MADV_RANDOM,      "MADV_RANDOM" },
+    { MADV_SEQUENTIAL,  "MADV_SEQUENTIAL" },
+    { MADV_WILLNEED,    "MADV_WILLNEED" },
+    { MADV_DONTNEED,    "MADV_DONTNEED" },
+#ifdef MADV_FREE
+    { MADV_FREE,        "MADV_FREE" },
+#endif
+#ifdef MADV_REMOVE
+    { MADV_REMOVE,      "MADV_REMOVE" },
+#endif
+#ifdef MADV_DONTFORK
+    { MADV_DONTFORK,    "MADV_DONTFORK" },
+    { MADV_DOFORK,      "MADV_DOFORK" },
+#endif
+#ifdef MADV_MERGEABLE
+    { MADV_MERGEABLE,   "MADV_MERGEABLE" },
+    { MADV_UNMERGEABLE, "MADV_UNMERGEABLE" },
+#endif
+#ifdef MADV_HUGEPAGE
+    { MADV_HUGEPAGE,    "MADV_HUGEPAGE" },
+    { MADV_NOHUGEPAGE,  "MADV_NOHUGEPAGE" },
+#endif
+#ifdef MADV_DONTDUMP
+    { MADV_DONTDUMP,    "MADV_DONTDUMP" },
+    { MADV_DODUMP,      "MADV_DODUMP" },
+#endif
+#ifdef MADV_WIPEONFORK
+    { MADV_WIPEONFORK,  "MADV_WIPEONFORK" },
+    { MADV_KEEPONFORK,  "MADV_KEEPONFORK" },
+#endif
+#ifdef MADV_COLD
+    { MADV_COLD,        "MADV_COLD" },
+    { MADV_PAGEOUT,     "MADV_PAGEOUT" },
+#endif
+#ifdef MADV_HWPOISON
+    { MADV_HWPOISON,    "MADV_HWPOISON" },
+#endif
+    { 0,                NULL },
+};
+
+void format_madvise_advice(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; madvise_advice_table[i].name != NULL; i++) {
+        if (madvise_advice_table[i].value == value) {
+            snprintf(out, out_size, "%s", madvise_advice_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
+/* futex()'s op: a command (FUTEX_WAIT, FUTEX_WAKE, ...) in the low
+ * bits, ORed with FUTEX_PRIVATE_FLAG and/or FUTEX_CLOCK_REALTIME. The
+ * command isn't a bitmask — it's an enum value — so it's split off
+ * with the same mask the kernel uses (everything except those two
+ * flag bits), looked up by exact match, and the flags are appended.
+ * An unknown command falls back to hex for just that part, keeping
+ * any flags readable. */
+#ifndef FUTEX_CLOCK_REALTIME
+#define FUTEX_CLOCK_REALTIME 256
+#endif
+
+static const flag_entry futex_cmd_table[] = {
+    { FUTEX_WAIT,            "FUTEX_WAIT" },
+    { FUTEX_WAKE,            "FUTEX_WAKE" },
+    { FUTEX_FD,              "FUTEX_FD" },
+    { FUTEX_REQUEUE,         "FUTEX_REQUEUE" },
+    { FUTEX_CMP_REQUEUE,     "FUTEX_CMP_REQUEUE" },
+    { FUTEX_WAKE_OP,         "FUTEX_WAKE_OP" },
+    { FUTEX_LOCK_PI,         "FUTEX_LOCK_PI" },
+    { FUTEX_UNLOCK_PI,       "FUTEX_UNLOCK_PI" },
+    { FUTEX_TRYLOCK_PI,      "FUTEX_TRYLOCK_PI" },
+    { FUTEX_WAIT_BITSET,     "FUTEX_WAIT_BITSET" },
+    { FUTEX_WAKE_BITSET,     "FUTEX_WAKE_BITSET" },
+    { FUTEX_WAIT_REQUEUE_PI, "FUTEX_WAIT_REQUEUE_PI" },
+    { FUTEX_CMP_REQUEUE_PI,  "FUTEX_CMP_REQUEUE_PI" },
+#ifdef FUTEX_LOCK_PI2
+    { FUTEX_LOCK_PI2,        "FUTEX_LOCK_PI2" },
+#endif
+    { 0,                     NULL },
+};
+
+void format_futex_op(unsigned long long value, char *out, size_t out_size) {
+    unsigned long long flags = value & (FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+    unsigned long long cmd = value & ~(unsigned long long)(FUTEX_PRIVATE_FLAG | FUTEX_CLOCK_REALTIME);
+
+    size_t oi = 0;
+    int found = 0;
+    for (int i = 0; futex_cmd_table[i].name != NULL; i++) {
+        if (futex_cmd_table[i].value == cmd) {
+            oi = (size_t)snprintf(out, out_size, "%s", futex_cmd_table[i].name);
+            found = 1;
+            break;
+        }
+    }
+    if (!found)
+        oi = (size_t)snprintf(out, out_size, "0x%llx", cmd);
+
+    if ((flags & FUTEX_PRIVATE_FLAG) && oi < out_size)
+        oi += (size_t)snprintf(out + oi, out_size - oi, "|FUTEX_PRIVATE_FLAG");
+    if ((flags & FUTEX_CLOCK_REALTIME) && oi < out_size)
+        snprintf(out + oi, out_size - oi, "|FUTEX_CLOCK_REALTIME");
 }

@@ -181,6 +181,21 @@ void format_at_flags(unsigned long long value, char *out, size_t out_size);
 void format_unlinkat_flags(unsigned long long value, char *out, size_t out_size);
 void format_faccessat_flags(unsigned long long value, char *out, size_t out_size);
 
+/* pipe2's flags (O_CLOEXEC, O_NONBLOCK, O_DIRECT). */
+void format_pipe2_flags(unsigned long long value, char *out, size_t out_size);
+
+/* getrandom's flags (GRND_NONBLOCK, GRND_RANDOM, GRND_INSECURE). */
+void format_getrandom_flags(unsigned long long value, char *out, size_t out_size);
+
+/* flock's operation (LOCK_SH, LOCK_EX, LOCK_UN, optionally |LOCK_NB). */
+void format_flock_op(unsigned long long value, char *out, size_t out_size);
+
+/* madvise's advice (MADV_DONTNEED, MADV_HUGEPAGE, ...). */
+void format_madvise_advice(unsigned long long value, char *out, size_t out_size);
+
+/* futex's op: the command plus FUTEX_PRIVATE_FLAG/FUTEX_CLOCK_REALTIME. */
+void format_futex_op(unsigned long long value, char *out, size_t out_size);
+
 /* prctl's option argument (PR_SET_NAME, PR_GET_DUMPABLE, ...). */
 void format_prctl_option(unsigned long long value, char *out, size_t out_size);
 

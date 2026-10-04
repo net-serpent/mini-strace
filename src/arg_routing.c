@@ -408,6 +408,60 @@ unsigned char msg_flags_arg_mask(const char *syscall) {
     return 0;
 }
 
+/* Single-argument decode masks for five more syscalls, each a
+ * one-entry-per-name table with the same linear scan: pipe2's flags
+ * (arg 1), getrandom's flags (arg 2), flock's operation (arg 1),
+ * madvise's advice (arg 2) and futex's op (arg 1). All immediate:
+ * none of these syscalls has a kernel-populated argument this
+ * project decodes, so none of them takes the deferred path. */
+static unsigned char mask_lookup(const string_arg_entry *table, const char *syscall) {
+    for (int i = 0; table[i].name != NULL; i++) {
+        if (strcmp(table[i].name, syscall) == 0)
+            return table[i].str_args;
+    }
+    return 0;
+}
+
+static const string_arg_entry pipe2_flags_arg_table[] = {
+    { "pipe2", 0x02 },  /* arg 1 */
+    { NULL,    0x00 },
+};
+unsigned char pipe2_flags_arg_mask(const char *syscall) {
+    return mask_lookup(pipe2_flags_arg_table, syscall);
+}
+
+static const string_arg_entry getrandom_flags_arg_table[] = {
+    { "getrandom", 0x04 },  /* arg 2 */
+    { NULL,        0x00 },
+};
+unsigned char getrandom_flags_arg_mask(const char *syscall) {
+    return mask_lookup(getrandom_flags_arg_table, syscall);
+}
+
+static const string_arg_entry flock_op_arg_table[] = {
+    { "flock", 0x02 },  /* arg 1 */
+    { NULL,    0x00 },
+};
+unsigned char flock_op_arg_mask(const char *syscall) {
+    return mask_lookup(flock_op_arg_table, syscall);
+}
+
+static const string_arg_entry madvise_advice_arg_table[] = {
+    { "madvise", 0x04 },  /* arg 2 */
+    { NULL,      0x00 },
+};
+unsigned char madvise_advice_arg_mask(const char *syscall) {
+    return mask_lookup(madvise_advice_arg_table, syscall);
+}
+
+static const string_arg_entry futex_op_arg_table[] = {
+    { "futex", 0x02 },  /* arg 1 */
+    { NULL,    0x00 },
+};
+unsigned char futex_op_arg_mask(const char *syscall) {
+    return mask_lookup(futex_op_arg_table, syscall);
+}
+
 /* Which argument holds prctl()'s option, decoded via
  * format_prctl_option() in decoders.c. */
 static const string_arg_entry prctl_option_arg_table[] = {
