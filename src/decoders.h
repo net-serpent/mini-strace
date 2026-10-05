@@ -181,6 +181,15 @@ void format_at_flags(unsigned long long value, char *out, size_t out_size);
 void format_unlinkat_flags(unsigned long long value, char *out, size_t out_size);
 void format_faccessat_flags(unsigned long long value, char *out, size_t out_size);
 
+/* A permission mode in octal (0644). chmod/fchmod/fchmodat/mkdir/
+ * mkdirat/mknod/mknodat/creat/umask. */
+void format_file_mode(unsigned long long value, char *out, size_t out_size);
+
+/* open/openat's mode: octal when flags include O_CREAT or O_TMPFILE,
+ * raw hex otherwise (the kernel ignores it then). */
+void format_open_mode(unsigned long long flags, unsigned long long mode,
+                       char *out, size_t out_size);
+
 /* pipe2's flags (O_CLOEXEC, O_NONBLOCK, O_DIRECT). */
 void format_pipe2_flags(unsigned long long value, char *out, size_t out_size);
 

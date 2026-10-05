@@ -422,6 +422,38 @@ static unsigned char mask_lookup(const string_arg_entry *table, const char *sysc
     return 0;
 }
 
+/* Which argument is a plain permission mode (octal), decoded via
+ * format_file_mode(): chmod/fchmod/fchmodat/fchmodat2/mkdir/mkdirat/
+ * mknod/mknodat/creat/umask. */
+static const string_arg_entry file_mode_arg_table[] = {
+    { "chmod",     0x02 },  /* arg 1 */
+    { "fchmod",    0x02 },  /* arg 1 */
+    { "fchmodat",  0x04 },  /* arg 2 */
+    { "fchmodat2", 0x04 },  /* arg 2 */
+    { "mkdir",     0x02 },  /* arg 1 */
+    { "mkdirat",   0x04 },  /* arg 2 */
+    { "mknod",     0x02 },  /* arg 1 */
+    { "mknodat",   0x04 },  /* arg 2 */
+    { "creat",     0x02 },  /* arg 1 */
+    { "umask",     0x01 },  /* arg 0 */
+    { NULL,        0x00 },
+};
+unsigned char file_mode_arg_mask(const char *syscall) {
+    return mask_lookup(file_mode_arg_table, syscall);
+}
+
+/* open()'s arg 2 / openat()'s arg 3: the mode that only means
+ * something when the flags (the argument right before it) create a
+ * file, decoded via format_open_mode(), which looks at that sibling. */
+static const string_arg_entry open_mode_arg_table[] = {
+    { "open",   0x04 },  /* arg 2 */
+    { "openat", 0x08 },  /* arg 3 */
+    { NULL,     0x00 },
+};
+unsigned char open_mode_arg_mask(const char *syscall) {
+    return mask_lookup(open_mode_arg_table, syscall);
+}
+
 static const string_arg_entry pipe2_flags_arg_table[] = {
     { "pipe2", 0x02 },  /* arg 1 */
     { NULL,    0x00 },
@@ -1136,6 +1168,7 @@ static const syscall_argc_entry syscall_argc_table[] = {
     { "write",          3 },
     { "pread64",        4 },
     { "pwrite64",       4 },
+    { "umask",          1 },
     { "readv",          3 },
     { "writev",         3 },
     { "lseek",          3 },

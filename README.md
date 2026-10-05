@@ -50,6 +50,9 @@ bare pointer or a raw number:
   `utimensat`/`execveat`: the `AT_*` flags argument
   (`AT_SYMLINK_NOFOLLOW`, `AT_REMOVEDIR`, `AT_EMPTY_PATH`, ...)
   instead of a raw number
+- `open`/`openat`/`creat`/`mkdir`/`mkdirat`/`mknod`/`mknodat`/
+  `chmod`/`fchmod`/`fchmodat`/`umask`: the permission mode in octal
+  (`0644`) instead of hex (`0x1a4`)
 - `futex`: `op` as the command plus its flag bits
   (`FUTEX_WAIT_BITSET|FUTEX_PRIVATE_FLAG|FUTEX_CLOCK_REALTIME`)
 - `madvise`: `advice` (`MADV_DONTNEED`, `MADV_HUGEPAGE`, ...)

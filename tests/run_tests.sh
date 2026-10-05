@@ -1171,6 +1171,41 @@ check_contains "futex decodes a command plus FUTEX_PRIVATE_FLAG" \
 check_contains "futex decodes a command plus both flag bits" \
     'futex\([^,]*, FUTEX_WAIT_BITSET\|FUTEX_PRIVATE_FLAG\|FUTEX_CLOCK_REALTIME,' "$out"
 
+echo "=== permission mode decoding (octal) ==="
+cat >/tmp/mini_strace_test_mode.c <<'EOF'
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+int main(void) {
+    umask(022);
+
+    int fd = open("/tmp/mini_strace_mode_test", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    close(fd);
+
+    int fd2 = open("/etc/hostname", O_RDONLY);
+    close(fd2);
+
+    chmod("/tmp/mini_strace_mode_test", 0600);
+    mkdir("/tmp/mini_strace_mode_dir", 0755);
+
+    unlink("/tmp/mini_strace_mode_test");
+    rmdir("/tmp/mini_strace_mode_dir");
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_mode /tmp/mini_strace_test_mode.c
+out=$($STRACE /tmp/mini_strace_test_mode 2>&1)
+check_contains "umask decodes its mask in octal" 'umask\(022\)' "$out"
+check_contains "open/openat decodes the mode in octal when O_CREAT is set" \
+    '"/tmp/mini_strace_mode_test", O_WRONLY\|O_CREAT\|O_TRUNC, 0644\)' "$out"
+check_contains "open/openat leaves the ignored mode as hex when O_CREAT is not set" \
+    '"/etc/hostname", O_RDONLY[^,]*, 0x[0-9a-f]+\)' "$out"
+check_contains "chmod decodes its mode in octal (as chmod or fchmodat)" \
+    '(chmod|fchmodat)\(.*"/tmp/mini_strace_mode_test", 0600\)' "$out"
+check_contains "mkdir decodes its mode in octal (as mkdir or mkdirat)" \
+    '(mkdir|mkdirat)\(.*"/tmp/mini_strace_mode_dir", 0755\)' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

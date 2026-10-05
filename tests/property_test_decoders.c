@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 
 #include "../src/decoders.h"
@@ -68,6 +69,16 @@ static void wrap_sockopt_optname(unsigned long long value, char *out, size_t out
  * (is_fd_arg = 0 keeps it pure formatting). */
 static void wrap_dirfd(unsigned long long value, char *out, size_t out_size) {
     format_dirfd(0, value, 0, out, out_size);
+}
+
+/* format_open_mode takes the sibling flags value; wrapped with flags
+ * fixed once to O_CREAT (octal path) and once to 0 (raw-hex path) so
+ * both branches get swept. */
+static void wrap_open_mode_creating(unsigned long long value, char *out, size_t out_size) {
+    format_open_mode(O_CREAT, value, out, out_size);
+}
+static void wrap_open_mode_plain(unsigned long long value, char *out, size_t out_size) {
+    format_open_mode(0, value, out, out_size);
 }
 
 static uint64_t rng_state = 0x9E3779B97F4A7C15ULL;
@@ -168,6 +179,9 @@ int main(void) {
         { "format_msg_flags",                 format_msg_flags },
         { "format_prctl_option",              format_prctl_option },
         { "format_dirfd(is_fd_arg=0)",        wrap_dirfd },
+        { "format_file_mode",                 format_file_mode },
+        { "format_open_mode(flags=O_CREAT)",  wrap_open_mode_creating },
+        { "format_open_mode(flags=0)",        wrap_open_mode_plain },
         { "format_pipe2_flags",               format_pipe2_flags },
         { "format_getrandom_flags",           format_getrandom_flags },
         { "format_flock_op",                  format_flock_op },

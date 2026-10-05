@@ -82,6 +82,10 @@ unsigned char at_flags_arg_mask(const char *syscall);
 unsigned char unlinkat_flags_arg_mask(const char *syscall);
 unsigned char faccessat_flags_arg_mask(const char *syscall);
 
+/* Permission-mode arguments (octal), and open/openat's mode. */
+unsigned char file_mode_arg_mask(const char *syscall);
+unsigned char open_mode_arg_mask(const char *syscall);
+
 /* pipe2's flags, getrandom's flags, flock's operation, madvise's
  * advice, futex's op. */
 unsigned char pipe2_flags_arg_mask(const char *syscall);

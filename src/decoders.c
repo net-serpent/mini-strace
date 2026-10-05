@@ -2247,3 +2247,31 @@ void format_futex_op(unsigned long long value, char *out, size_t out_size) {
     if ((flags & FUTEX_CLOCK_REALTIME) && oi < out_size)
         snprintf(out + oi, out_size - oi, "|FUTEX_CLOCK_REALTIME");
 }
+
+/* A file permission mode (chmod, mkdir, creat, umask, ...) in octal,
+ * the form anyone reads it in: 0644 instead of 0x1a4. Zero prints as
+ * a bare 0. The value is printed whole, not masked, so the file-type
+ * bits mknod passes (S_IFIFO, ...) and any setuid/setgid/sticky bits
+ * show up as the leading octal digits they really are. */
+void format_file_mode(unsigned long long value, char *out, size_t out_size) {
+    if (value == 0)
+        snprintf(out, out_size, "0");
+    else
+        snprintf(out, out_size, "0%llo", value);
+}
+
+/* open()/openat()'s mode argument. Unlike the syscalls above it is
+ * only meaningful when the flags create a file (O_CREAT or
+ * O_TMPFILE); otherwise the kernel ignores it and whatever the
+ * register held is leftover garbage. In that case it is left as the
+ * plain hex every unrecognized argument gets, rather than presenting
+ * garbage as a neat octal permission. Takes the sibling flags value,
+ * the same cross-argument shape format_sockopt_optname() uses for
+ * level. */
+void format_open_mode(unsigned long long flags, unsigned long long mode,
+                       char *out, size_t out_size) {
+    if ((flags & O_CREAT) || (flags & O_TMPFILE) == O_TMPFILE)
+        format_file_mode(mode, out, out_size);
+    else
+        snprintf(out, out_size, "0x%llx", mode);
+}

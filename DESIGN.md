@@ -562,6 +562,34 @@ all six slots, which is its real arity anyway.
 
 All five decoders are pure and are in the property-test harness.
 
+## Permission modes (octal)
+
+A mode like `0644` is unreadable as `0x1a4`, and it appears in every
+trace that creates a file. `format_file_mode()` prints it in octal
+(zero as a bare `0`). It prints the value whole rather than masking
+to the permission bits, so the setuid/setgid/sticky digits and the
+file-type bits `mknod` passes (`S_IFIFO`, ...) appear as the leading
+octal digits they really are instead of being silently dropped.
+
+`open`/`openat` need more care. Their mode argument only means
+something when the flags create a file (`O_CREAT`, or `O_TMPFILE`,
+which is a composite of two bits and so is compared whole); otherwise
+the kernel ignores it and the register holds leftover garbage.
+`format_open_mode()` takes the sibling flags value, the same
+cross-argument shape `format_sockopt_optname()` uses for `level`
+(flags is always the argument immediately before mode, so
+`mini_strace.c` reads `raw_args[i - 1]`), and decodes octal only when
+the flags create a file. Otherwise it keeps the plain hex every
+unrecognized argument gets, because showing garbage as a tidy octal
+permission would be worse than showing it as the opaque number it is.
+
+All of these syscalls are immediate (no kernel-populated argument),
+so only the entry-stop dispatch is involved. Both decoders are pure;
+`format_open_mode()` is swept twice in the property harness, once
+with `O_CREAT` set and once without, so both branches are covered.
+`umask` had no entry in the arity table and was printing all six
+argument slots; that is fixed here with its real arity of 1.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

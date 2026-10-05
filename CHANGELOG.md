@@ -57,6 +57,14 @@ on release.
   number. Bit `0x200` is `AT_REMOVEDIR` for `unlinkat` and
   `AT_EACCESS` for `faccessat2`, so those two decode it by their own
   name; for every other syscall it stays hex.
+- `open`/`openat`/`creat`/`mkdir`/`mkdirat`/`mknod`/`mknodat`/
+  `chmod`/`fchmod`/`fchmodat`/`fchmodat2`/`umask`: the permission
+  mode in octal (`0644`, `022`) instead of hex (`0x1a4`). `open`/
+  `openat`'s mode is only shown in octal when the flags actually
+  create a file (`O_CREAT` or `O_TMPFILE`); otherwise the kernel
+  ignores it, whatever the register held is garbage, and it stays
+  hex rather than being presented as a plausible-looking permission.
+  `umask` also gained its real argument count (1) in the arity table.
 - `futex`: `op` decodes as the command (`FUTEX_WAIT`, `FUTEX_WAKE`,
   `FUTEX_LOCK_PI`, ...) with `FUTEX_PRIVATE_FLAG` and
   `FUTEX_CLOCK_REALTIME` appended, instead of a raw number. Present
