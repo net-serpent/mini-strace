@@ -65,6 +65,19 @@ on release.
   ignores it, whatever the register held is garbage, and it stays
   hex rather than being presented as a plausible-looking permission.
   `umask` also gained its real argument count (1) in the arity table.
+- `renameat2`: flags (`RENAME_NOREPLACE`, `RENAME_EXCHANGE`,
+  `RENAME_WHITEOUT`).
+- `mremap`: flags (`MREMAP_MAYMOVE`, `MREMAP_FIXED`,
+  `MREMAP_DONTUNMAP`).
+- `memfd_create`: the name as a string, and flags (`MFD_CLOEXEC`,
+  `MFD_ALLOW_SEALING`, `MFD_HUGETLB`).
+- `eventfd2`: flags (`EFD_SEMAPHORE`, `EFD_CLOEXEC`, `EFD_NONBLOCK`).
+- `getrlimit`/`setrlimit`/`prlimit64`: the resource by name
+  (`RLIMIT_NOFILE`, `RLIMIT_CORE`, ...). The `struct rlimit`
+  arguments stay raw addresses: `prlimit64`'s `old_limit` is
+  kernel-populated and would need deferred handling.
+- `mremap`, `memfd_create`, `eventfd2`, `getrlimit` and `setrlimit`
+  gained their real argument counts in the arity table.
 - `futex`: `op` decodes as the command (`FUTEX_WAIT`, `FUTEX_WAKE`,
   `FUTEX_LOCK_PI`, ...) with `FUTEX_PRIVATE_FLAG` and
   `FUTEX_CLOCK_REALTIME` appended, instead of a raw number. Present

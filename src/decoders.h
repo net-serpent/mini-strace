@@ -190,6 +190,21 @@ void format_file_mode(unsigned long long value, char *out, size_t out_size);
 void format_open_mode(unsigned long long flags, unsigned long long mode,
                        char *out, size_t out_size);
 
+/* renameat2's flags (RENAME_NOREPLACE, RENAME_EXCHANGE, ...). */
+void format_renameat2_flags(unsigned long long value, char *out, size_t out_size);
+
+/* mremap's flags (MREMAP_MAYMOVE, MREMAP_FIXED, ...). */
+void format_mremap_flags(unsigned long long value, char *out, size_t out_size);
+
+/* memfd_create's flags (MFD_CLOEXEC, MFD_ALLOW_SEALING, ...). */
+void format_memfd_flags(unsigned long long value, char *out, size_t out_size);
+
+/* eventfd2's flags (EFD_SEMAPHORE, EFD_CLOEXEC, EFD_NONBLOCK). */
+void format_eventfd_flags(unsigned long long value, char *out, size_t out_size);
+
+/* getrlimit/setrlimit/prlimit64's resource (RLIMIT_NOFILE, ...). */
+void format_rlimit_resource(unsigned long long value, char *out, size_t out_size);
+
 /* pipe2's flags (O_CLOEXEC, O_NONBLOCK, O_DIRECT). */
 void format_pipe2_flags(unsigned long long value, char *out, size_t out_size);
 

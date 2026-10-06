@@ -2275,3 +2275,117 @@ void format_open_mode(unsigned long long flags, unsigned long long mode,
     else
         snprintf(out, out_size, "0x%llx", mode);
 }
+
+/* Small flags arguments for renameat2, mremap, memfd_create and
+ * eventfd2. Same shared walker as pipe2/getrandom/flock. The values
+ * are fixed kernel ABI, so each has a fallback definition: which
+ * header exposes them (and whether it needs _GNU_SOURCE) varies
+ * across libcs.
+ *
+ * memfd_create's flags can also carry a huge-page size encoded in
+ * the high bits (MFD_HUGE_*); those are not named here and survive
+ * as the hex remainder. eventfd2's EFD_CLOEXEC/EFD_NONBLOCK are by
+ * definition the same bits as O_CLOEXEC/O_NONBLOCK. */
+#ifndef RENAME_NOREPLACE
+#define RENAME_NOREPLACE (1 << 0)
+#endif
+#ifndef RENAME_EXCHANGE
+#define RENAME_EXCHANGE (1 << 1)
+#endif
+#ifndef RENAME_WHITEOUT
+#define RENAME_WHITEOUT (1 << 2)
+#endif
+static const flag_entry renameat2_flag_table[] = {
+    { RENAME_NOREPLACE, "RENAME_NOREPLACE" },
+    { RENAME_EXCHANGE,  "RENAME_EXCHANGE" },
+    { RENAME_WHITEOUT,  "RENAME_WHITEOUT" },
+    { 0,                NULL },
+};
+void format_renameat2_flags(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(renameat2_flag_table, value, out, out_size);
+}
+
+#ifndef MREMAP_MAYMOVE
+#define MREMAP_MAYMOVE 1
+#endif
+#ifndef MREMAP_FIXED
+#define MREMAP_FIXED 2
+#endif
+#ifndef MREMAP_DONTUNMAP
+#define MREMAP_DONTUNMAP 4
+#endif
+static const flag_entry mremap_flag_table[] = {
+    { MREMAP_MAYMOVE,   "MREMAP_MAYMOVE" },
+    { MREMAP_FIXED,     "MREMAP_FIXED" },
+    { MREMAP_DONTUNMAP, "MREMAP_DONTUNMAP" },
+    { 0,                NULL },
+};
+void format_mremap_flags(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(mremap_flag_table, value, out, out_size);
+}
+
+#ifndef MFD_CLOEXEC
+#define MFD_CLOEXEC 0x0001U
+#endif
+#ifndef MFD_ALLOW_SEALING
+#define MFD_ALLOW_SEALING 0x0002U
+#endif
+#ifndef MFD_HUGETLB
+#define MFD_HUGETLB 0x0004U
+#endif
+static const flag_entry memfd_flag_table[] = {
+    { MFD_CLOEXEC,       "MFD_CLOEXEC" },
+    { MFD_ALLOW_SEALING, "MFD_ALLOW_SEALING" },
+    { MFD_HUGETLB,       "MFD_HUGETLB" },
+    { 0,                 NULL },
+};
+void format_memfd_flags(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(memfd_flag_table, value, out, out_size);
+}
+
+#ifndef EFD_SEMAPHORE
+#define EFD_SEMAPHORE 1
+#endif
+static const flag_entry eventfd_flag_table[] = {
+    { EFD_SEMAPHORE, "EFD_SEMAPHORE" },
+    { O_CLOEXEC,     "EFD_CLOEXEC" },
+    { O_NONBLOCK,    "EFD_NONBLOCK" },
+    { 0,             NULL },
+};
+void format_eventfd_flags(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(eventfd_flag_table, value, out, out_size);
+}
+
+/* The resource argument of getrlimit/setrlimit/prlimit64: a plain
+ * enum lookup. The struct rlimit arguments are left as raw
+ * addresses: prlimit64's old_limit is kernel-populated and would
+ * need the same deferred handling other output structs get, which
+ * this round does not add. */
+static const flag_entry rlimit_resource_table[] = {
+    { RLIMIT_CPU,        "RLIMIT_CPU" },
+    { RLIMIT_FSIZE,      "RLIMIT_FSIZE" },
+    { RLIMIT_DATA,       "RLIMIT_DATA" },
+    { RLIMIT_STACK,      "RLIMIT_STACK" },
+    { RLIMIT_CORE,       "RLIMIT_CORE" },
+    { RLIMIT_RSS,        "RLIMIT_RSS" },
+    { RLIMIT_NPROC,      "RLIMIT_NPROC" },
+    { RLIMIT_NOFILE,     "RLIMIT_NOFILE" },
+    { RLIMIT_MEMLOCK,    "RLIMIT_MEMLOCK" },
+    { RLIMIT_AS,         "RLIMIT_AS" },
+    { RLIMIT_LOCKS,      "RLIMIT_LOCKS" },
+    { RLIMIT_SIGPENDING, "RLIMIT_SIGPENDING" },
+    { RLIMIT_MSGQUEUE,   "RLIMIT_MSGQUEUE" },
+    { RLIMIT_NICE,       "RLIMIT_NICE" },
+    { RLIMIT_RTPRIO,     "RLIMIT_RTPRIO" },
+    { RLIMIT_RTTIME,     "RLIMIT_RTTIME" },
+    { 0,                 NULL },
+};
+void format_rlimit_resource(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; rlimit_resource_table[i].name != NULL; i++) {
+        if (rlimit_resource_table[i].value == value) {
+            snprintf(out, out_size, "%s", rlimit_resource_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}

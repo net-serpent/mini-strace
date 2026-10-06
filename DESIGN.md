@@ -590,6 +590,38 @@ with `O_CREAT` set and once without, so both branches are covered.
 `umask` had no entry in the arity table and was printing all six
 argument slots; that is fixed here with its real arity of 1.
 
+## renameat2, mremap, memfd_create, eventfd2 flags and rlimit resources
+
+Same shape as the previous small-argument batch: every one is a
+single argument of a syscall with no kernel-populated argument this
+project decodes, so all take the entry-stop dispatch only, with pure
+decoders swept by the property harness. The four flags decoders share
+the `format_flag_table_value()` walker (0 prints as `0`, unknown bits
+survive as a hex remainder) and carry fallback `#define`s for their
+constants, since the header that provides them varies across libcs.
+
+Two details worth recording. `memfd_create`'s flags can also carry a
+huge-page size in the high bits (`MFD_HUGE_*`); those are not named
+and survive as the hex remainder, so a hugetlb request still prints
+`MFD_HUGETLB|0x...` rather than losing information. `eventfd2`'s
+`EFD_CLOEXEC`/`EFD_NONBLOCK` are by definition the same bits as
+`O_CLOEXEC`/`O_NONBLOCK`, so the table maps those values to the
+`EFD_` names rather than reusing the `O_` ones. `memfd_create`'s name
+is also a string argument, added to the string table.
+
+The rlimit resource is a plain enum lookup shared by `getrlimit`,
+`setrlimit` (argument 0) and `prlimit64` (argument 1). The `struct
+rlimit` arguments are left raw: `prlimit64`'s `old_limit` is
+kernel-populated and would need the deferred-handling machinery
+other output structs have, which is not added here. The test accepts
+either `prlimit64(0x0, RLIMIT_NOFILE, ...)` or `getrlimit(RLIMIT_NOFILE,
+...)`, since modern glibc implements `getrlimit`/`setrlimit` on top of
+`prlimit64`: the usual wrapper-picks-a-different-syscall pattern.
+
+Five syscalls here (`mremap`, `memfd_create`, `eventfd2`, `getrlimit`,
+`setrlimit`) were missing from the arity table and printed all six
+slots; they now print their real counts.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

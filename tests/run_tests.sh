@@ -1206,6 +1206,55 @@ check_contains "chmod decodes its mode in octal (as chmod or fchmodat)" \
 check_contains "mkdir decodes its mode in octal (as mkdir or mkdirat)" \
     '(mkdir|mkdirat)\(.*"/tmp/mini_strace_mode_dir", 0755\)' "$out"
 
+echo "=== renameat2/mremap/memfd_create/eventfd2/rlimit argument decoding ==="
+cat >/tmp/mini_strace_test_misc2.c <<'EOF'
+#define _GNU_SOURCE
+#include <fcntl.h>
+#include <sys/eventfd.h>
+#include <sys/mman.h>
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#ifndef SYS_renameat2
+#define SYS_renameat2 276
+#endif
+
+int main(void) {
+    syscall(SYS_renameat2, AT_FDCWD, "/tmp/mini_strace_rn_a", AT_FDCWD,
+            "/tmp/mini_strace_rn_b", 1 /* RENAME_NOREPLACE */);
+
+    void *page = mmap(0, 4096, PROT_READ | PROT_WRITE,
+                      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    mremap(page, 4096, 8192, MREMAP_MAYMOVE);
+
+    int mfd = memfd_create("mini_test", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    close(mfd);
+
+    int efd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    close(efd);
+
+    struct rlimit rl;
+    getrlimit(RLIMIT_NOFILE, &rl);
+    setrlimit(RLIMIT_CORE, &rl);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_misc2 /tmp/mini_strace_test_misc2.c
+out=$($STRACE /tmp/mini_strace_test_misc2 2>&1)
+check_contains "renameat2 decodes RENAME_NOREPLACE" \
+    'renameat2\(AT_FDCWD, "[^"]*", AT_FDCWD, "[^"]*", RENAME_NOREPLACE\)' "$out"
+check_contains "mremap decodes MREMAP_MAYMOVE" \
+    'mremap\([^,]*, 0x1000, 0x2000, MREMAP_MAYMOVE,' "$out"
+check_contains "memfd_create decodes its name and flags" \
+    'memfd_create\("mini_test", MFD_CLOEXEC\|MFD_ALLOW_SEALING\)' "$out"
+check_contains "eventfd2 decodes EFD_CLOEXEC|EFD_NONBLOCK" \
+    'eventfd2\(0x0, EFD_CLOEXEC\|EFD_NONBLOCK\)' "$out"
+check_contains "getrlimit's resource decodes by name (as prlimit64 or getrlimit)" \
+    '(prlimit64\(0x0, |getrlimit\()RLIMIT_NOFILE' "$out"
+check_contains "setrlimit's resource decodes by name (as prlimit64 or setrlimit)" \
+    '(prlimit64\(0x0, |setrlimit\()RLIMIT_CORE' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

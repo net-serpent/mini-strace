@@ -53,6 +53,11 @@ bare pointer or a raw number:
 - `open`/`openat`/`creat`/`mkdir`/`mkdirat`/`mknod`/`mknodat`/
   `chmod`/`fchmod`/`fchmodat`/`umask`: the permission mode in octal
   (`0644`) instead of hex (`0x1a4`)
+- `renameat2`/`mremap`/`memfd_create`/`eventfd2`: flags
+  (`RENAME_NOREPLACE`, `MREMAP_MAYMOVE`, `MFD_CLOEXEC`,
+  `EFD_NONBLOCK`, ...), and `memfd_create`'s name as a string
+- `getrlimit`/`setrlimit`/`prlimit64`: the resource (`RLIMIT_NOFILE`,
+  `RLIMIT_STACK`, ...) instead of a raw number
 - `futex`: `op` as the command plus its flag bits
   (`FUTEX_WAIT_BITSET|FUTEX_PRIVATE_FLAG|FUTEX_CLOCK_REALTIME`)
 - `madvise`: `advice` (`MADV_DONTNEED`, `MADV_HUGEPAGE`, ...)

@@ -82,6 +82,14 @@ unsigned char at_flags_arg_mask(const char *syscall);
 unsigned char unlinkat_flags_arg_mask(const char *syscall);
 unsigned char faccessat_flags_arg_mask(const char *syscall);
 
+/* renameat2/mremap/memfd_create/eventfd2 flags, and the resource
+ * argument of getrlimit/setrlimit/prlimit64. */
+unsigned char renameat2_flags_arg_mask(const char *syscall);
+unsigned char mremap_flags_arg_mask(const char *syscall);
+unsigned char memfd_flags_arg_mask(const char *syscall);
+unsigned char eventfd_flags_arg_mask(const char *syscall);
+unsigned char rlimit_resource_arg_mask(const char *syscall);
+
 /* Permission-mode arguments (octal), and open/openat's mode. */
 unsigned char file_mode_arg_mask(const char *syscall);
 unsigned char open_mode_arg_mask(const char *syscall);

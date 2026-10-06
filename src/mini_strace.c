@@ -569,6 +569,11 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char prctl_option_mask = prctl_option_arg_mask(name);
                     unsigned char prctl_name_mask = prctl_name_arg_mask(name);
                     unsigned char dirfd_mask = dirfd_arg_mask(name);
+                    unsigned char renameat2_flags_mask = renameat2_flags_arg_mask(name);
+                    unsigned char mremap_flags_mask = mremap_flags_arg_mask(name);
+                    unsigned char memfd_flags_mask = memfd_flags_arg_mask(name);
+                    unsigned char eventfd_flags_mask = eventfd_flags_arg_mask(name);
+                    unsigned char rlimit_resource_mask = rlimit_resource_arg_mask(name);
                     unsigned char file_mode_mask = file_mode_arg_mask(name);
                     unsigned char open_mode_mask = open_mode_arg_mask(name);
                     unsigned char pipe2_flags_mask = pipe2_flags_arg_mask(name);
@@ -631,6 +636,16 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_prctl_name_arg(wpid, raw_args[i - 1], raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (dirfd_mask & (1 << i))
                             format_dirfd(wpid, raw_args[i], fd_mask & (1 << i), argbuf[i], sizeof(argbuf[i]));
+                        else if (renameat2_flags_mask & (1 << i))
+                            format_renameat2_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (mremap_flags_mask & (1 << i))
+                            format_mremap_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (memfd_flags_mask & (1 << i))
+                            format_memfd_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (eventfd_flags_mask & (1 << i))
+                            format_eventfd_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (rlimit_resource_mask & (1 << i))
+                            format_rlimit_resource(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (file_mode_mask & (1 << i))
                             format_file_mode(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (open_mode_mask & (1 << i))

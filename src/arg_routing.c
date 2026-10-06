@@ -30,6 +30,7 @@ static const string_arg_entry string_arg_table[] = {
     { "rename",      0x03 },  /* args 0 and 1 */
     { "renameat",    0x0a },  /* args 1 and 3 */
     { "renameat2",   0x0a },
+    { "memfd_create", 0x01 },
     { "readlink",    0x01 },
     { "readlinkat",  0x02 },
     { "chmod",       0x01 },
@@ -452,6 +453,52 @@ static const string_arg_entry open_mode_arg_table[] = {
 };
 unsigned char open_mode_arg_mask(const char *syscall) {
     return mask_lookup(open_mode_arg_table, syscall);
+}
+
+/* renameat2's flags (arg 4), mremap's flags (arg 3), memfd_create's
+ * flags (arg 1), eventfd2's flags (arg 1), and the resource argument
+ * of getrlimit/setrlimit (arg 0) and prlimit64 (arg 1). All
+ * immediate. */
+static const string_arg_entry renameat2_flags_arg_table[] = {
+    { "renameat2", 0x10 },  /* arg 4 */
+    { NULL,        0x00 },
+};
+unsigned char renameat2_flags_arg_mask(const char *syscall) {
+    return mask_lookup(renameat2_flags_arg_table, syscall);
+}
+
+static const string_arg_entry mremap_flags_arg_table[] = {
+    { "mremap", 0x08 },  /* arg 3 */
+    { NULL,     0x00 },
+};
+unsigned char mremap_flags_arg_mask(const char *syscall) {
+    return mask_lookup(mremap_flags_arg_table, syscall);
+}
+
+static const string_arg_entry memfd_flags_arg_table[] = {
+    { "memfd_create", 0x02 },  /* arg 1 */
+    { NULL,           0x00 },
+};
+unsigned char memfd_flags_arg_mask(const char *syscall) {
+    return mask_lookup(memfd_flags_arg_table, syscall);
+}
+
+static const string_arg_entry eventfd_flags_arg_table[] = {
+    { "eventfd2", 0x02 },  /* arg 1 */
+    { NULL,       0x00 },
+};
+unsigned char eventfd_flags_arg_mask(const char *syscall) {
+    return mask_lookup(eventfd_flags_arg_table, syscall);
+}
+
+static const string_arg_entry rlimit_resource_arg_table[] = {
+    { "getrlimit", 0x01 },  /* arg 0 */
+    { "setrlimit", 0x01 },  /* arg 0 */
+    { "prlimit64", 0x02 },  /* arg 1 */
+    { NULL,        0x00 },
+};
+unsigned char rlimit_resource_arg_mask(const char *syscall) {
+    return mask_lookup(rlimit_resource_arg_table, syscall);
 }
 
 static const string_arg_entry pipe2_flags_arg_table[] = {
@@ -1169,6 +1216,11 @@ static const syscall_argc_entry syscall_argc_table[] = {
     { "pread64",        4 },
     { "pwrite64",       4 },
     { "umask",          1 },
+    { "mremap",         5 },
+    { "memfd_create",   2 },
+    { "eventfd2",       2 },
+    { "getrlimit",      2 },
+    { "setrlimit",      2 },
     { "readv",          3 },
     { "writev",         3 },
     { "lseek",          3 },
