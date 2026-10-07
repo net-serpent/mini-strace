@@ -70,15 +70,35 @@ instead, which glibc falls back from only when the kernel supports
 it); tracing the raw syscall this project actually sees means the
 real arity is 3, matching the kernel, not 4.
 
-The table isn't exhaustive over every Linux syscall (there are
-hundreds, and this project has no way to verify correctness against
-real behavior for ones nobody's actually traced with it). It covers
-every syscall this codebase already has dedicated argument decoding
-for elsewhere in this file — their real signatures already had to
-be known to write that decoding — plus a short list of syscalls
-that show up in essentially every trace regardless of what's being
-run (`brk`, `mmap`/`munmap`, process/thread info like `getpid`,
-`exit_group`, and similar startup bookkeeping).
+The table started as the syscalls this codebase has dedicated
+argument decoding for (their real signatures already had to be known
+to write that decoding) plus a short list of ones present in every
+trace (`brk`, `mmap`/`munmap`, `getpid`, `exit_group`, ...). It has
+since been audited against the full syscall name table: a script
+diffs every name in `syscall_names.h` against the arity table, and
+each missing name with a signature this project is sure of was given
+an arity-only entry (the block at the end of the table), covering
+about 200 more syscalls (`setuid` and the credential family, the
+`sched_*` family, SysV IPC, `timerfd_*`, `io_uring_*`, `splice`,
+`waitid`, and so on). The counts are the kernel's `SYSCALL_DEFINEn`
+arities. x86-64's legacy names that the aarch64-generated name list
+does not contain (`mknod`, `getdents`, `epoll_create`, `time`, ...)
+were checked separately and added too.
+
+A few are deliberately still absent, so they keep the safe
+six-slot fallback rather than risk a wrong count that would hide a
+real argument: the newest syscalls whose signatures were not
+verified (`lsm_*`, `statmount`, `listmount`, the `futex_wait`
+family, `map_shadow_stack`), the removed `nfsservctl`, and the
+`arch_specific_syscall` placeholder. A wrong entry is worse than a
+missing one: an extra slot is harmless noise, a missing slot silently
+drops a real argument.
+
+The test for the fallback itself used to call `posix_fadvise`, which
+stopped being "unknown" the moment `fadvise64` got an entry. It now
+issues a raw syscall with a number past the end of the name table,
+which is printed as `unknown` and so can never gain an entry, on
+either architecture.
 
 Verifying this against real traces in this project's aarch64 dev
 container surfaced a portability trap: aarch64's generic syscall ABI

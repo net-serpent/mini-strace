@@ -558,14 +558,17 @@ echo "=== argument count matches real syscall arity ==="
 cat >/tmp/mini_strace_test_argc.c <<'EOF'
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/syscall.h>
 
 int main(void) {
     access("/", 0);   /* F_OK == 0; syscall_argc_table: 2 real args */
     getpid();         /* syscall_argc_table: 0 args */
 
-    int fd = open("/", O_RDONLY);
-    posix_fadvise(fd, 0, 0, POSIX_FADV_NORMAL);  /* not in syscall_argc_table */
-    close(fd);
+    /* A number past the end of the syscall name table: printed as
+     * "unknown", which can never be in syscall_argc_table, so it
+     * always exercises the all-six-slots fallback. (This used to be
+     * posix_fadvise, but that syscall has a real arity entry now.) */
+    syscall(9999, 1, 2, 3, 4, 5, 6);
 
     return 0;
 }
@@ -577,7 +580,7 @@ check_contains "access()/faccessat() prints exactly its real arguments, not all 
 check_contains "a 0-argument syscall (getpid) prints with no arguments at all" \
     'getpid\(\)' "$out"
 check_contains "a syscall not in syscall_argc_table still falls back to all 6 raw slots" \
-    'fadvise64\(([^,]*,){5}[^)]*\)' "$out"
+    'unknown\(0x1, 0x2, 0x3, 0x4, 0x5, 0x6\)' "$out"
 
 echo "=== stat/lstat/fstat/newfstatat struct stat decoding ==="
 cat >/tmp/mini_strace_test_stat.c <<'EOF'
@@ -1254,6 +1257,32 @@ check_contains "getrlimit's resource decodes by name (as prlimit64 or getrlimit)
     '(prlimit64\(0x0, |getrlimit\()RLIMIT_NOFILE' "$out"
 check_contains "setrlimit's resource decodes by name (as prlimit64 or setrlimit)" \
     '(prlimit64\(0x0, |setrlimit\()RLIMIT_CORE' "$out"
+
+echo "=== arity-only entries print their real argument count ==="
+cat >/tmp/mini_strace_test_arity2.c <<'EOF'
+#define _GNU_SOURCE
+#include <sched.h>
+#include <sys/syscall.h>
+#include <sys/utsname.h>
+#include <unistd.h>
+
+int main(void) {
+    syscall(SYS_getsid, 0);
+    syscall(SYS_getpgid, 0);
+    struct utsname u;
+    uname(&u);
+    cpu_set_t set;
+    sched_getaffinity(0, sizeof(set), &set);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_arity2 /tmp/mini_strace_test_arity2.c
+out=$($STRACE /tmp/mini_strace_test_arity2 2>&1)
+check_contains "a 1-argument syscall prints one argument (getsid)" 'getsid\(0x0\) = ' "$out"
+check_contains "a 1-argument syscall prints one argument (getpgid)" 'getpgid\(0x0\) = ' "$out"
+check_contains "uname prints its single pointer argument" 'uname\(0x[0-9a-f]+\) = ' "$out"
+check_contains "a 3-argument syscall prints three arguments (sched_getaffinity)" \
+    'sched_getaffinity\(0x0, 0x[0-9a-f]+, 0x[0-9a-f]+\) = ' "$out"
 
 echo "=== -p attach ==="
 sleep 5 &

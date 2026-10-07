@@ -169,6 +169,16 @@ on release.
 
 ### Changed
 
+- Arity audit: about 200 more syscalls now print their real argument
+  count instead of all six register slots (the credential family
+  `setuid`/`setresuid`/..., `uname`, `getrusage`, the `sched_*`
+  family, SysV IPC, `timerfd_*`, `splice`, `waitid`, `io_uring_*`,
+  `utimensat`, `futex`, and so on, plus x86-64's legacy `mknod`,
+  `getdents`, `time`, ...). Found by diffing the syscall name table
+  against the arity table. Syscalls whose signatures are not
+  verified (`lsm_*`, `statmount`, `listmount`, `futex_wait` family,
+  `map_shadow_stack`) still fall back to six slots rather than risk
+  a wrong count hiding a real argument.
 - Syscalls now print exactly as many arguments as they actually
   take (`access(path, mode)`), not all 6 raw register slots
   regardless of real arity (`access(path, mode, 0x..., 0x...,
