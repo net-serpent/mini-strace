@@ -202,6 +202,17 @@ void format_memfd_flags(unsigned long long value, char *out, size_t out_size);
 /* eventfd2's flags (EFD_SEMAPHORE, EFD_CLOEXEC, EFD_NONBLOCK). */
 void format_eventfd_flags(unsigned long long value, char *out, size_t out_size);
 
+/* wait4's options (WNOHANG, WUNTRACED, ...) and waitid's options
+ * (WNOHANG, WSTOPPED, WEXITED, ...): bit 0x2 is named differently. */
+void format_wait4_options(unsigned long long value, char *out, size_t out_size);
+void format_waitid_options(unsigned long long value, char *out, size_t out_size);
+
+/* waitid's idtype (P_ALL, P_PID, P_PGID, P_PIDFD). */
+void format_waitid_idtype(unsigned long long value, char *out, size_t out_size);
+
+/* sched_setscheduler's policy (SCHED_FIFO, ..., |SCHED_RESET_ON_FORK). */
+void format_sched_policy(unsigned long long value, char *out, size_t out_size);
+
 /* getrlimit/setrlimit/prlimit64's resource (RLIMIT_NOFILE, ...). */
 void format_rlimit_resource(unsigned long long value, char *out, size_t out_size);
 

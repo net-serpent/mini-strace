@@ -65,6 +65,14 @@ on release.
   ignores it, whatever the register held is garbage, and it stays
   hex rather than being presented as a plausible-looking permission.
   `umask` also gained its real argument count (1) in the arity table.
+- `wait4`/`waitid`: `options` (`WNOHANG`, `WUNTRACED`, `WCONTINUED`,
+  `WNOWAIT`, `__WNOTHREAD`, `__WALL`, `__WCLONE`; `waitid` also
+  `WSTOPPED`, `WEXITED`). Bit `0x2` is `WUNTRACED` for `wait4` but
+  `WSTOPPED` for `waitid`, so they are separate decoders. `waitid`'s
+  `idtype` decodes as `P_ALL`/`P_PID`/`P_PGID`/`P_PIDFD`.
+- `sched_setscheduler`: the policy (`SCHED_OTHER`, `SCHED_FIFO`,
+  `SCHED_RR`, `SCHED_BATCH`, `SCHED_IDLE`, `SCHED_DEADLINE`) with
+  `SCHED_RESET_ON_FORK` appended when set.
 - `renameat2`: flags (`RENAME_NOREPLACE`, `RENAME_EXCHANGE`,
   `RENAME_WHITEOUT`).
 - `mremap`: flags (`MREMAP_MAYMOVE`, `MREMAP_FIXED`,

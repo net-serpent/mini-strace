@@ -2356,6 +2356,117 @@ void format_eventfd_flags(unsigned long long value, char *out, size_t out_size) 
     format_flag_table_value(eventfd_flag_table, value, out, out_size);
 }
 
+/* wait4()'s and waitid()'s options. Two decoders because the same
+ * bit means different things: 0x2 is WUNTRACED for wait4 but
+ * WSTOPPED for waitid, and 0x4 (WEXITED) exists only for waitid.
+ * The values are fixed kernel ABI with fallback definitions, like
+ * the other flags here; the double-underscore ones (__WNOTHREAD,
+ * __WALL, __WCLONE) are printed with their conventional names. */
+#ifndef WNOHANG
+#define WNOHANG 1
+#endif
+#ifndef WUNTRACED
+#define WUNTRACED 2
+#endif
+#ifndef WCONTINUED
+#define WCONTINUED 8
+#endif
+#ifndef WNOWAIT
+#define WNOWAIT 0x01000000
+#endif
+
+static const flag_entry wait4_options_table[] = {
+    { WNOHANG,       "WNOHANG" },
+    { WUNTRACED,     "WUNTRACED" },
+    { WCONTINUED,    "WCONTINUED" },
+    { WNOWAIT,       "WNOWAIT" },
+    { 0x20000000,    "__WNOTHREAD" },
+    { 0x40000000,    "__WALL" },
+    { 0x80000000UL,  "__WCLONE" },
+    { 0,             NULL },
+};
+void format_wait4_options(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(wait4_options_table, value, out, out_size);
+}
+
+static const flag_entry waitid_options_table[] = {
+    { WNOHANG,       "WNOHANG" },
+    { 2,             "WSTOPPED" },
+    { 4,             "WEXITED" },
+    { WCONTINUED,    "WCONTINUED" },
+    { WNOWAIT,       "WNOWAIT" },
+    { 0x20000000,    "__WNOTHREAD" },
+    { 0x40000000,    "__WALL" },
+    { 0x80000000UL,  "__WCLONE" },
+    { 0,             NULL },
+};
+void format_waitid_options(unsigned long long value, char *out, size_t out_size) {
+    format_flag_table_value(waitid_options_table, value, out, out_size);
+}
+
+/* waitid()'s idtype: a plain enum. Literals rather than the P_*
+ * enumerators, since P_PIDFD only exists in newer glibc headers. */
+static const flag_entry waitid_idtype_table[] = {
+    { 0, "P_ALL" },
+    { 1, "P_PID" },
+    { 2, "P_PGID" },
+    { 3, "P_PIDFD" },
+    { 0, NULL },
+};
+void format_waitid_idtype(unsigned long long value, char *out, size_t out_size) {
+    for (int i = 0; waitid_idtype_table[i].name != NULL; i++) {
+        if (waitid_idtype_table[i].value == value) {
+            snprintf(out, out_size, "%s", waitid_idtype_table[i].name);
+            return;
+        }
+    }
+    snprintf(out, out_size, "0x%llx", value);
+}
+
+/* sched_setscheduler()'s policy: an enum (SCHED_OTHER, SCHED_FIFO,
+ * ...) optionally ORed with SCHED_RESET_ON_FORK. Split the same way
+ * futex's op is: the flag bit is peeled off, the remainder is looked
+ * up by exact match, and an unknown policy falls back to hex for
+ * just that part. */
+#ifndef SCHED_BATCH
+#define SCHED_BATCH 3
+#endif
+#ifndef SCHED_IDLE
+#define SCHED_IDLE 5
+#endif
+#ifndef SCHED_DEADLINE
+#define SCHED_DEADLINE 6
+#endif
+#ifndef SCHED_RESET_ON_FORK
+#define SCHED_RESET_ON_FORK 0x40000000
+#endif
+
+static const flag_entry sched_policy_table[] = {
+    { SCHED_OTHER,    "SCHED_OTHER" },
+    { SCHED_FIFO,     "SCHED_FIFO" },
+    { SCHED_RR,       "SCHED_RR" },
+    { SCHED_BATCH,    "SCHED_BATCH" },
+    { SCHED_IDLE,     "SCHED_IDLE" },
+    { SCHED_DEADLINE, "SCHED_DEADLINE" },
+    { 0,              NULL },
+};
+void format_sched_policy(unsigned long long value, char *out, size_t out_size) {
+    unsigned long long policy = value & ~(unsigned long long)SCHED_RESET_ON_FORK;
+    size_t oi = 0;
+    int found = 0;
+    for (int i = 0; sched_policy_table[i].name != NULL; i++) {
+        if (sched_policy_table[i].value == policy) {
+            oi = (size_t)snprintf(out, out_size, "%s", sched_policy_table[i].name);
+            found = 1;
+            break;
+        }
+    }
+    if (!found)
+        oi = (size_t)snprintf(out, out_size, "0x%llx", policy);
+    if ((value & SCHED_RESET_ON_FORK) && oi < out_size)
+        snprintf(out + oi, out_size - oi, "|SCHED_RESET_ON_FORK");
+}
+
 /* The resource argument of getrlimit/setrlimit/prlimit64: a plain
  * enum lookup. The struct rlimit arguments are left as raw
  * addresses: prlimit64's old_limit is kernel-populated and would

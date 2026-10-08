@@ -569,6 +569,9 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char prctl_option_mask = prctl_option_arg_mask(name);
                     unsigned char prctl_name_mask = prctl_name_arg_mask(name);
                     unsigned char dirfd_mask = dirfd_arg_mask(name);
+                    unsigned char waitid_idtype_mask = waitid_idtype_arg_mask(name);
+                    unsigned char waitid_options_mask = waitid_options_arg_mask(name);
+                    unsigned char sched_policy_mask = sched_policy_arg_mask(name);
                     unsigned char renameat2_flags_mask = renameat2_flags_arg_mask(name);
                     unsigned char mremap_flags_mask = mremap_flags_arg_mask(name);
                     unsigned char memfd_flags_mask = memfd_flags_arg_mask(name);
@@ -636,6 +639,12 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_prctl_name_arg(wpid, raw_args[i - 1], raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (dirfd_mask & (1 << i))
                             format_dirfd(wpid, raw_args[i], fd_mask & (1 << i), argbuf[i], sizeof(argbuf[i]));
+                        else if (waitid_idtype_mask & (1 << i))
+                            format_waitid_idtype(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (waitid_options_mask & (1 << i))
+                            format_waitid_options(raw_args[i], argbuf[i], sizeof(argbuf[i]));
+                        else if (sched_policy_mask & (1 << i))
+                            format_sched_policy(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (renameat2_flags_mask & (1 << i))
                             format_renameat2_flags(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (mremap_flags_mask & (1 << i))
@@ -810,6 +819,11 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                          * faccessat2 have no deferred argument, so they
                          * never reach this loop. */
                         unsigned char at_flags_mask = at_flags_arg_mask(ts->pending_name);
+                        /* wait4 is always deferred (wstatus and rusage are
+                         * kernel-populated), so its own options argument,
+                         * caller-populated like msg_flags_mask's, is only
+                         * ever dispatched from here. */
+                        unsigned char wait4_options_mask = wait4_options_arg_mask(ts->pending_name);
 
                         /* the socklen_t the kernel wrote the real
                          * sockaddr size into is itself only valid now,
@@ -848,6 +862,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                               argbuf[i], sizeof(argbuf[i]));
                             else if (at_flags_mask & (1 << i))
                                 format_at_flags(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (wait4_options_mask & (1 << i))
+                                format_wait4_options(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_read_entry != NULL &&
                                 i == ts->pending_read_entry->buf_idx && ret > 0)
                                 read_child_buffer(wpid, ts->pending_args[i], (unsigned long long)ret,

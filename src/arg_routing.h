@@ -82,6 +82,13 @@ unsigned char at_flags_arg_mask(const char *syscall);
 unsigned char unlinkat_flags_arg_mask(const char *syscall);
 unsigned char faccessat_flags_arg_mask(const char *syscall);
 
+/* wait4's options, waitid's idtype and options, sched_setscheduler's
+ * policy. */
+unsigned char wait4_options_arg_mask(const char *syscall);
+unsigned char waitid_idtype_arg_mask(const char *syscall);
+unsigned char waitid_options_arg_mask(const char *syscall);
+unsigned char sched_policy_arg_mask(const char *syscall);
+
 /* renameat2/mremap/memfd_create/eventfd2 flags, and the resource
  * argument of getrlimit/setrlimit/prlimit64. */
 unsigned char renameat2_flags_arg_mask(const char *syscall);

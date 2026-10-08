@@ -491,6 +491,43 @@ unsigned char eventfd_flags_arg_mask(const char *syscall) {
     return mask_lookup(eventfd_flags_arg_table, syscall);
 }
 
+/* wait4's options (arg 2), waitid's idtype (arg 0) and options
+ * (arg 3), sched_setscheduler's policy (arg 1). wait4 is always
+ * deferred (its wstatus and rusage are kernel-populated), so its
+ * options are only ever dispatched from the exit-stop loop in
+ * mini_strace.c; the other three are immediate. */
+static const string_arg_entry wait4_options_arg_table[] = {
+    { "wait4", 0x04 },  /* arg 2 */
+    { NULL,    0x00 },
+};
+unsigned char wait4_options_arg_mask(const char *syscall) {
+    return mask_lookup(wait4_options_arg_table, syscall);
+}
+
+static const string_arg_entry waitid_idtype_arg_table[] = {
+    { "waitid", 0x01 },  /* arg 0 */
+    { NULL,     0x00 },
+};
+unsigned char waitid_idtype_arg_mask(const char *syscall) {
+    return mask_lookup(waitid_idtype_arg_table, syscall);
+}
+
+static const string_arg_entry waitid_options_arg_table[] = {
+    { "waitid", 0x08 },  /* arg 3 */
+    { NULL,     0x00 },
+};
+unsigned char waitid_options_arg_mask(const char *syscall) {
+    return mask_lookup(waitid_options_arg_table, syscall);
+}
+
+static const string_arg_entry sched_policy_arg_table[] = {
+    { "sched_setscheduler", 0x02 },  /* arg 1 */
+    { NULL,                 0x00 },
+};
+unsigned char sched_policy_arg_mask(const char *syscall) {
+    return mask_lookup(sched_policy_arg_table, syscall);
+}
+
 static const string_arg_entry rlimit_resource_arg_table[] = {
     { "getrlimit", 0x01 },  /* arg 0 */
     { "setrlimit", 0x01 },  /* arg 0 */

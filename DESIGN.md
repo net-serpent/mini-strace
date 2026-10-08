@@ -642,6 +642,38 @@ Five syscalls here (`mremap`, `memfd_create`, `eventfd2`, `getrlimit`,
 `setrlimit`) were missing from the arity table and printed all six
 slots; they now print their real counts.
 
+## wait4/waitid options, waitid idtype, sched_setscheduler policy
+
+`wait4` and `waitid` take the same kind of options bitmask, but the
+bit assignments are not the same: `0x2` is `WUNTRACED` for `wait4`
+and `WSTOPPED` for `waitid`, and `0x4` (`WEXITED`) only exists for
+`waitid`. The same situation as `AT_REMOVEDIR` versus `AT_EACCESS`,
+and it gets the same answer: two tables and two decoders rather than
+one table that names a shared bit wrongly for one of them. The
+double-underscore flags are printed under their conventional names
+(`__WNOTHREAD`, `__WALL`, `__WCLONE`); `__WCLONE` is bit 31, which
+is why the table values are `unsigned long long`.
+
+`wait4` is always on the deferred path (its wstatus and rusage are
+kernel-populated), so its options argument, although caller-populated,
+never reaches the entry-stop dispatch and is decoded from the
+exit-stop loop alone, via a mask computed from `ts->pending_name`:
+the same always-deferred trap `msg_flags_mask` and `dirfd_mask`
+already document. `waitid` is not deferred (this project does not
+decode its `siginfo`), so its `idtype` and options are ordinary
+entry-stop arguments. The test exercises both paths, including a
+bare `0` options value, which is a real value and prints as `0`.
+
+`waitid`'s `idtype` uses literal values for its names rather than the
+`P_*` enumerators, because `P_PIDFD` only exists in recent glibc
+headers.
+
+`sched_setscheduler`'s policy is an enum optionally ORed with
+`SCHED_RESET_ON_FORK`, so it is decoded like `futex`'s op: peel the
+flag bit off, look the remainder up by exact match, fall back to hex
+for an unknown policy only, and append the flag by name. All four
+decoders are pure and in the property harness.
+
 ## kill/tkill/tgkill signal number
 
 Reuses `sigabbrev_np()`, already used to name a signal being

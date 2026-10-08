@@ -56,6 +56,10 @@ bare pointer or a raw number:
 - `renameat2`/`mremap`/`memfd_create`/`eventfd2`: flags
   (`RENAME_NOREPLACE`, `MREMAP_MAYMOVE`, `MFD_CLOEXEC`,
   `EFD_NONBLOCK`, ...), and `memfd_create`'s name as a string
+- `wait4`/`waitid`: `options` (`WNOHANG`, `WUNTRACED`, `WEXITED`,
+  `__WALL`, ...), and `waitid`'s `idtype` (`P_PID`, `P_ALL`, ...)
+- `sched_setscheduler`: the policy (`SCHED_FIFO`,
+  `SCHED_OTHER|SCHED_RESET_ON_FORK`, ...)
 - `getrlimit`/`setrlimit`/`prlimit64`: the resource (`RLIMIT_NOFILE`,
   `RLIMIT_STACK`, ...) instead of a raw number
 - `futex`: `op` as the command plus its flag bits

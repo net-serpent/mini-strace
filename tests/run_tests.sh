@@ -1284,6 +1284,54 @@ check_contains "uname prints its single pointer argument" 'uname\(0x[0-9a-f]+\) 
 check_contains "a 3-argument syscall prints three arguments (sched_getaffinity)" \
     'sched_getaffinity\(0x0, 0x[0-9a-f]+, 0x[0-9a-f]+\) = ' "$out"
 
+echo "=== wait4/waitid options and sched_setscheduler policy decoding ==="
+cat >/tmp/mini_strace_test_waitsched.c <<'EOF'
+#define _GNU_SOURCE
+#include <sched.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#ifndef SCHED_RESET_ON_FORK
+#define SCHED_RESET_ON_FORK 0x40000000
+#endif
+
+int main(void) {
+    int st;
+    pid_t c1 = fork();
+    if (c1 == 0)
+        _exit(0);
+    waitpid(c1, &st, WNOHANG);
+    waitpid(c1, &st, 0);
+
+    pid_t c2 = fork();
+    if (c2 == 0)
+        _exit(0);
+    siginfo_t info;
+    waitid(P_PID, c2, &info, WEXITED);
+    waitid(P_ALL, 0, &info, WEXITED | WNOHANG);
+
+    struct sched_param sp = { .sched_priority = 0 };
+    sched_setscheduler(0, SCHED_OTHER | SCHED_RESET_ON_FORK, &sp);
+    sp.sched_priority = 1;
+    sched_setscheduler(0, SCHED_FIFO, &sp);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_waitsched /tmp/mini_strace_test_waitsched.c
+out=$($STRACE /tmp/mini_strace_test_waitsched 2>&1)
+check_contains "wait4 decodes WNOHANG from the deferred path" \
+    'wait4\(.*, WNOHANG,' "$out"
+check_contains "wait4 decodes options of 0 as a bare 0" \
+    'wait4\(0x[0-9a-f]+, [^,]*, 0, ' "$out"
+check_contains "waitid decodes idtype and WEXITED" \
+    'waitid\(P_PID, 0x[0-9a-f]+, 0x[0-9a-f]+, WEXITED,' "$out"
+check_contains "waitid decodes P_ALL and combined WNOHANG|WEXITED" \
+    'waitid\(P_ALL, 0x0, 0x[0-9a-f]+, WNOHANG\|WEXITED,' "$out"
+check_contains "sched_setscheduler decodes a policy with SCHED_RESET_ON_FORK" \
+    'sched_setscheduler\(0x0, SCHED_OTHER\|SCHED_RESET_ON_FORK,' "$out"
+check_contains "sched_setscheduler decodes SCHED_FIFO" \
+    'sched_setscheduler\(0x0, SCHED_FIFO,' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!
