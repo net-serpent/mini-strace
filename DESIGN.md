@@ -631,9 +631,9 @@ is also a string argument, added to the string table.
 
 The rlimit resource is a plain enum lookup shared by `getrlimit`,
 `setrlimit` (argument 0) and `prlimit64` (argument 1). The `struct
-rlimit` arguments are left raw: `prlimit64`'s `old_limit` is
-kernel-populated and would need the deferred-handling machinery
-other output structs have, which is not added here. The test accepts
+rlimit` arguments are decoded separately, in "struct rlimit and
+getrusage" below, which also records what making `prlimit64` deferred
+did to this resource argument. The test accepts
 either `prlimit64(0x0, RLIMIT_NOFILE, ...)` or `getrlimit(RLIMIT_NOFILE,
 ...)`, since modern glibc implements `getrlimit`/`setrlimit` on top of
 `prlimit64`: the usual wrapper-picks-a-different-syscall pattern.
@@ -673,6 +673,45 @@ headers.
 flag bit off, look the remainder up by exact match, fall back to hex
 for an unknown policy only, and append the flag by name. All four
 decoders are pure and in the property harness.
+
+## struct rlimit and getrusage
+
+`struct rlimit` is two unsigned 64-bit values (`rlim_cur`, then
+`rlim_max`) on the 64-bit architectures this project targets, and the
+kernel's `struct rlimit64` has the same layout, so there is no libc
+translation to worry about of the kind `struct sigaction` has.
+All-ones is `RLIM_INFINITY`, by far the most common "no limit" value,
+and prints by name.
+
+The direction depends on the syscall, which is what makes this more
+than a decoder: `setrlimit`'s struct and `prlimit64`'s `new_limit`
+are caller-populated, while `getrlimit`'s struct and `prlimit64`'s
+`old_limit` are written by the kernel and only meaningful after the
+call returns. Two routing tables (`rlimit_in`, `rlimit_out`) carry
+that distinction. The out side takes the full deferred route with a
+new `pending_rlimit_idx` field, wired at every site the other
+`pending_*` fields are (struct, three resets, trigger condition,
+stash, the exit-stop outer gate, the dispatch).
+
+`prlimit64` has both an input and an output struct, so it is always
+deferred, and that silently moved two entry-stop decodes with it:
+its already-working *resource* argument and its input struct. The
+first test run caught exactly that: `prlimit64(0x0, 0x7, ...)`, the
+resource regressing to hex the moment the output struct made the
+syscall deferred. The fix is the same one this project has applied
+several times: the resource and input-struct masks are also computed
+from `ts->pending_name` and dispatched in the exit-stop loop. The
+lesson is worth stating plainly: adding a deferred argument to a
+syscall is never local to that argument, it re-routes the whole
+syscall.
+
+`getrusage` needed almost nothing: its rusage output is the same
+struct `wait4` already decodes, so it only joined `rusage_arg_table`
+and rides the existing `pending_rusage_idx` path. Its `who` argument
+(`RUSAGE_SELF`, `RUSAGE_CHILDREN` = -1, `RUSAGE_THREAD`) compares the
+low 32 bits only, since -1 arrives zero-extended on one architecture
+and sign-extended on the other, and is dispatched from the exit-stop
+loop because `getrusage` is always deferred.
 
 ## kill/tkill/tgkill signal number
 

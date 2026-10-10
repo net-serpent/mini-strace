@@ -60,6 +60,11 @@ bare pointer or a raw number:
   `__WALL`, ...), and `waitid`'s `idtype` (`P_PID`, `P_ALL`, ...)
 - `sched_setscheduler`: the policy (`SCHED_FIFO`,
   `SCHED_OTHER|SCHED_RESET_ON_FORK`, ...)
+- `getrlimit`/`setrlimit`/`prlimit64`: the `struct rlimit`
+  (`{rlim_cur=1024, rlim_max=RLIM_INFINITY}`), both the one the
+  caller passes in and the one the kernel writes back
+- `getrusage`: `who` (`RUSAGE_SELF`, `RUSAGE_CHILDREN`) and the
+  resulting `struct rusage`, the same decoding `wait4` gets
 - `getrlimit`/`setrlimit`/`prlimit64`: the resource (`RLIMIT_NOFILE`,
   `RLIMIT_STACK`, ...) instead of a raw number
 - `futex`: `op` as the command plus its flag bits

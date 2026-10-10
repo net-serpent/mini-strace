@@ -118,6 +118,7 @@ typedef struct {
     const buffer_arg_entry *pending_pollfds_entry; /* poll's fds array + nfds length */
     int pending_statx_idx;        /* -1 = none; which arg is statx's output struct statx* */
     const buffer_arg_entry *pending_iovec_entry; /* readv's iov array + iovcnt */
+    int pending_rlimit_idx;       /* -1 = none; which arg is a kernel-written struct rlimit* */
     int suppressed;
     struct timespec entry_time;  /* when this syscall's entry-stop fired, for -T/-c */
     const char *current_name;    /* syscall in flight, for -c's per-name accounting */
@@ -465,6 +466,14 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 }
             }
             const buffer_arg_entry *iovec_read_entry = iovec_read_arg_lookup(name);
+            unsigned char rlimit_out_mask = rlimit_out_arg_mask(name);
+            int rlimit_out_idx = -1;
+            for (int i = 0; i < 6; i++) {
+                if (rlimit_out_mask & (1 << i)) {
+                    rlimit_out_idx = i;
+                    break;
+                }
+            }
 
             if (show_timing || summary_mode)
                 clock_gettime(CLOCK_MONOTONIC, &ts->entry_time);
@@ -490,11 +499,12 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_pollfds_entry = NULL;
                 ts->pending_statx_idx = -1;
                 ts->pending_iovec_entry = NULL;
+                ts->pending_rlimit_idx = -1;
             } else if (read_entry != NULL || accept_entry != NULL || wait_status_idx >= 0 ||
                        msghdr_recv_idx >= 0 || stat_buf_idx >= 0 || getdents_buf_idx >= 0 ||
                        sigaction_old_idx >= 0 || timespec_out_idx >= 0 || rusage_idx >= 0 ||
                        epoll_events_idx >= 0 || pollfds_entry != NULL || statx_buf_idx >= 0 ||
-                       iovec_read_entry != NULL) {
+                       iovec_read_entry != NULL || rlimit_out_idx >= 0) {
                 /* read()-family, accept/getsockname/getpeername-family,
                  * wait4, recvmsg, the stat family, getdents64,
                  * rt_sigaction's oldact, epoll_wait, poll, statx,
@@ -526,6 +536,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_pollfds_entry = pollfds_entry;
                 ts->pending_statx_idx = statx_buf_idx;
                 ts->pending_iovec_entry = iovec_read_entry;
+                ts->pending_rlimit_idx = rlimit_out_idx;
             } else {
                 /* everything else prints immediately, same as before:
                  * known path-string args get dereferenced, write()'s
@@ -544,6 +555,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                 ts->pending_pollfds_entry = NULL;
                 ts->pending_statx_idx = -1;
                 ts->pending_iovec_entry = NULL;
+                ts->pending_rlimit_idx = -1;
                 if (!summary_mode) {
                     unsigned char str_mask = string_arg_mask(name);
                     unsigned char argv_mask = argv_arg_mask(name);
@@ -569,6 +581,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     unsigned char prctl_option_mask = prctl_option_arg_mask(name);
                     unsigned char prctl_name_mask = prctl_name_arg_mask(name);
                     unsigned char dirfd_mask = dirfd_arg_mask(name);
+                    unsigned char rlimit_in_mask = rlimit_in_arg_mask(name);
                     unsigned char waitid_idtype_mask = waitid_idtype_arg_mask(name);
                     unsigned char waitid_options_mask = waitid_options_arg_mask(name);
                     unsigned char sched_policy_mask = sched_policy_arg_mask(name);
@@ -639,6 +652,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                             format_prctl_name_arg(wpid, raw_args[i - 1], raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (dirfd_mask & (1 << i))
                             format_dirfd(wpid, raw_args[i], fd_mask & (1 << i), argbuf[i], sizeof(argbuf[i]));
+                        else if (rlimit_in_mask & (1 << i))
+                            format_rlimit(wpid, raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (waitid_idtype_mask & (1 << i))
                             format_waitid_idtype(raw_args[i], argbuf[i], sizeof(argbuf[i]));
                         else if (waitid_options_mask & (1 << i))
@@ -732,7 +747,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     ts->pending_sigaction_idx >= 0 || ts->pending_timespec_out_idx >= 0 ||
                     ts->pending_rusage_idx >= 0 || ts->pending_epoll_events_idx >= 0 ||
                     ts->pending_pollfds_entry != NULL || ts->pending_statx_idx >= 0 ||
-                    ts->pending_iovec_entry != NULL) {
+                    ts->pending_iovec_entry != NULL || ts->pending_rlimit_idx >= 0) {
                     /* deferred print: build the whole "name(args) = ret"
                      * line now that the return value (and anything the
                      * kernel filled in) is available. Any of the twelve
@@ -824,6 +839,21 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                          * caller-populated like msg_flags_mask's, is only
                          * ever dispatched from here. */
                         unsigned char wait4_options_mask = wait4_options_arg_mask(ts->pending_name);
+                        /* getrusage's who and prlimit64's caller-populated
+                         * new_limit are both entry-populated, but each
+                         * syscall carries a kernel-written argument and so
+                         * is always deferred; they are only ever decoded
+                         * from this loop. (setrlimit has no output
+                         * argument and takes the entry-stop's own
+                         * rlimit_in dispatch instead.) */
+                        unsigned char rusage_who_mask = rusage_who_arg_mask(ts->pending_name);
+                        unsigned char rlimit_in_mask = rlimit_in_arg_mask(ts->pending_name);
+                        /* prlimit64 is now always deferred (its old_limit is
+                         * kernel-written), which silently moved its resource
+                         * argument off the entry-stop dispatch too; getrlimit
+                         * is deferred for the same reason. setrlimit is the
+                         * only one of the three the entry-stop still sees. */
+                        unsigned char rlimit_resource_mask = rlimit_resource_arg_mask(ts->pending_name);
 
                         /* the socklen_t the kernel wrote the real
                          * sockaddr size into is itself only valid now,
@@ -864,6 +894,12 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_at_flags(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (wait4_options_mask & (1 << i))
                                 format_wait4_options(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (rusage_who_mask & (1 << i))
+                                format_rusage_who(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (rlimit_resource_mask & (1 << i))
+                                format_rlimit_resource(ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (rlimit_in_mask & (1 << i))
+                                format_rlimit(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_read_entry != NULL &&
                                 i == ts->pending_read_entry->buf_idx && ret > 0)
                                 read_child_buffer(wpid, ts->pending_args[i], (unsigned long long)ret,
@@ -885,6 +921,8 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                                 format_timespec(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_rusage_idx == i && ret >= 0)
                                 format_rusage(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
+                            else if (ts->pending_rlimit_idx == i && ret >= 0)
+                                format_rlimit(wpid, ts->pending_args[i], argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_epoll_events_idx == i)
                                 format_epoll_events_buf(wpid, ts->pending_args[i], ret, argbuf[i], sizeof(argbuf[i]));
                             else if (ts->pending_pollfds_entry != NULL &&
@@ -918,6 +956,7 @@ static void run_tracer(pid_t child, int follow_forks, int show_timing, int summa
                     ts->pending_pollfds_entry = NULL;
                     ts->pending_statx_idx = -1;
                     ts->pending_iovec_entry = NULL;
+                    ts->pending_rlimit_idx = -1;
                 }
 
                 double elapsed = 0.0;

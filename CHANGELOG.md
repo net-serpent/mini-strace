@@ -65,6 +65,16 @@ on release.
   ignores it, whatever the register held is garbage, and it stays
   hex rather than being presented as a plausible-looking permission.
   `umask` also gained its real argument count (1) in the arity table.
+- `getrlimit`/`setrlimit`/`prlimit64`: the `struct rlimit`
+  (`{rlim_cur=8388608, rlim_max=RLIM_INFINITY}`) instead of a raw
+  pointer. `setrlimit`'s and `prlimit64`'s `new_limit` are decoded as
+  the caller's input; `getrlimit`'s result and `prlimit64`'s
+  `old_limit` are kernel-written and deferred to the exit-stop. This
+  replaces the earlier "struct rlimit left as a raw address" scope
+  boundary.
+- `getrusage`: `who` (`RUSAGE_SELF`, `RUSAGE_CHILDREN`,
+  `RUSAGE_THREAD`) and the resulting `struct rusage`, reusing the
+  decoding `wait4` already had.
 - `wait4`/`waitid`: `options` (`WNOHANG`, `WUNTRACED`, `WCONTINUED`,
   `WNOWAIT`, `__WNOTHREAD`, `__WALL`, `__WCLONE`; `waitid` also
   `WSTOPPED`, `WEXITED`). Bit `0x2` is `WUNTRACED` for `wait4` but
@@ -82,8 +92,7 @@ on release.
 - `eventfd2`: flags (`EFD_SEMAPHORE`, `EFD_CLOEXEC`, `EFD_NONBLOCK`).
 - `getrlimit`/`setrlimit`/`prlimit64`: the resource by name
   (`RLIMIT_NOFILE`, `RLIMIT_CORE`, ...). The `struct rlimit`
-  arguments stay raw addresses: `prlimit64`'s `old_limit` is
-  kernel-populated and would need deferred handling.
+  arguments are decoded separately, see the entry below.
 - `mremap`, `memfd_create`, `eventfd2`, `getrlimit` and `setrlimit`
   gained their real argument counts in the arity table.
 - `futex`: `op` decodes as the command (`FUTEX_WAIT`, `FUTEX_WAKE`,

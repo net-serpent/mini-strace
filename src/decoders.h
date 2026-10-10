@@ -213,6 +213,15 @@ void format_waitid_idtype(unsigned long long value, char *out, size_t out_size);
 /* sched_setscheduler's policy (SCHED_FIFO, ..., |SCHED_RESET_ON_FORK). */
 void format_sched_policy(unsigned long long value, char *out, size_t out_size);
 
+/* getrusage's who (RUSAGE_SELF, RUSAGE_CHILDREN, RUSAGE_THREAD). */
+void format_rusage_who(unsigned long long value, char *out, size_t out_size);
+
+/* The struct rlimit of getrlimit/setrlimit/prlimit64: rlim_cur and
+ * rlim_max, with RLIM_INFINITY by name. For the kernel-written
+ * direction (getrlimit, prlimit64's old_limit) only meaningful after
+ * the syscall returns. */
+void format_rlimit(pid_t pid, unsigned long long addr, char *out, size_t out_size);
+
 /* getrlimit/setrlimit/prlimit64's resource (RLIMIT_NOFILE, ...). */
 void format_rlimit_resource(unsigned long long value, char *out, size_t out_size);
 

@@ -1332,6 +1332,33 @@ check_contains "sched_setscheduler decodes a policy with SCHED_RESET_ON_FORK" \
 check_contains "sched_setscheduler decodes SCHED_FIFO" \
     'sched_setscheduler\(0x0, SCHED_FIFO,' "$out"
 
+echo "=== struct rlimit and getrusage decoding ==="
+cat >/tmp/mini_strace_test_rlimit.c <<'EOF'
+#include <sys/resource.h>
+
+int main(void) {
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    getrusage(RUSAGE_CHILDREN, &ru);
+
+    struct rlimit rl;
+    getrlimit(RLIMIT_NOFILE, &rl);
+
+    struct rlimit inf = { 0, RLIM_INFINITY };
+    setrlimit(RLIMIT_CORE, &inf);
+    return 0;
+}
+EOF
+gcc -O0 -o /tmp/mini_strace_test_rlimit /tmp/mini_strace_test_rlimit.c
+out=$($STRACE /tmp/mini_strace_test_rlimit 2>&1)
+check_contains "getrusage decodes who and the kernel-populated rusage" \
+    'getrusage\(RUSAGE_SELF, \{ru_utime' "$out"
+check_contains "getrusage decodes RUSAGE_CHILDREN" 'getrusage\(RUSAGE_CHILDREN, ' "$out"
+check_contains "getrlimit's kernel-written struct rlimit decodes (as prlimit64 old_limit or getrlimit)" \
+    '(prlimit64\(0x0, RLIMIT_NOFILE, NULL, |getrlimit\(RLIMIT_NOFILE, )\{rlim_cur=[0-9A-Z_]+, rlim_max=[0-9A-Z_]+\}' "$out"
+check_contains "setrlimit's caller-written struct rlimit decodes RLIM_INFINITY (as prlimit64 new_limit or setrlimit)" \
+    '(prlimit64\(0x0, RLIMIT_CORE, |setrlimit\(RLIMIT_CORE, )\{rlim_cur=0, rlim_max=RLIM_INFINITY\}' "$out"
+
 echo "=== -p attach ==="
 sleep 5 &
 bgpid=$!

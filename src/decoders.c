@@ -2467,6 +2467,54 @@ void format_sched_policy(unsigned long long value, char *out, size_t out_size) {
         snprintf(out + oi, out_size - oi, "|SCHED_RESET_ON_FORK");
 }
 
+/* getrusage()'s who: RUSAGE_SELF (0), RUSAGE_CHILDREN (-1),
+ * RUSAGE_THREAD (1). The value is an int, so only the low 32 bits of
+ * the register are meaningful (-1 arrives zero-extended on one
+ * architecture and sign-extended on the other). */
+void format_rusage_who(unsigned long long value, char *out, size_t out_size) {
+    switch ((int)(unsigned int)value) {
+    case 0:  snprintf(out, out_size, "RUSAGE_SELF"); break;
+    case -1: snprintf(out, out_size, "RUSAGE_CHILDREN"); break;
+    case 1:  snprintf(out, out_size, "RUSAGE_THREAD"); break;
+    default: snprintf(out, out_size, "0x%llx", value); break;
+    }
+}
+
+/* The struct rlimit that getrlimit/setrlimit/prlimit64 pass: two
+ * unsigned 64-bit values, rlim_cur then rlim_max, on the 64-bit
+ * architectures this project targets (the kernel's struct rlimit64
+ * has the same layout, so there is no libc translation to worry about
+ * the way struct sigaction has). All-ones is RLIM_INFINITY, by far
+ * the most common value for "no limit", and prints by name.
+ *
+ * Direction depends on the syscall: setrlimit's and prlimit64's
+ * new_limit are caller-populated; getrlimit's and prlimit64's
+ * old_limit are written by the kernel and only meaningful after the
+ * call returns. The same function decodes both; mini_strace.c calls
+ * it from the right point. */
+static void format_rlim_value(unsigned long long v, char *out, size_t out_size) {
+    if (v == ~0ULL)
+        snprintf(out, out_size, "RLIM_INFINITY");
+    else
+        snprintf(out, out_size, "%llu", v);
+}
+
+void format_rlimit(pid_t pid, unsigned long long addr, char *out, size_t out_size) {
+    if (addr == 0) {
+        snprintf(out, out_size, "NULL");
+        return;
+    }
+    unsigned long long lim[2];
+    if (read_child_raw(pid, addr, (unsigned char *)lim, sizeof(lim)) < sizeof(lim)) {
+        snprintf(out, out_size, "0x%llx", addr);
+        return;
+    }
+    char cur[32], max[32];
+    format_rlim_value(lim[0], cur, sizeof(cur));
+    format_rlim_value(lim[1], max, sizeof(max));
+    snprintf(out, out_size, "{rlim_cur=%s, rlim_max=%s}", cur, max);
+}
+
 /* The resource argument of getrlimit/setrlimit/prlimit64: a plain
  * enum lookup. The struct rlimit arguments are left as raw
  * addresses: prlimit64's old_limit is kernel-populated and would

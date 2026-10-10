@@ -528,6 +528,42 @@ unsigned char sched_policy_arg_mask(const char *syscall) {
     return mask_lookup(sched_policy_arg_table, syscall);
 }
 
+/* getrusage's who (arg 0). getrusage is always deferred (its rusage
+ * is kernel-populated), so this is only dispatched from the exit-stop
+ * loop. */
+static const string_arg_entry rusage_who_arg_table[] = {
+    { "getrusage", 0x01 },  /* arg 0 */
+    { NULL,        0x00 },
+};
+unsigned char rusage_who_arg_mask(const char *syscall) {
+    return mask_lookup(rusage_who_arg_table, syscall);
+}
+
+/* struct rlimit arguments, decoded via format_rlimit(). Two tables
+ * because of direction: _in is caller-populated (setrlimit's rlim,
+ * prlimit64's new_limit), _out is written by the kernel and deferred
+ * to the exit-stop (getrlimit's rlim, prlimit64's old_limit).
+ * prlimit64 appears in both, which also means it is always deferred:
+ * its _in struct is then decoded from the exit-stop loop too, the
+ * same always-deferred situation as nanosleep's requested time. */
+static const string_arg_entry rlimit_in_arg_table[] = {
+    { "setrlimit", 0x02 },  /* arg 1 */
+    { "prlimit64", 0x04 },  /* arg 2 */
+    { NULL,        0x00 },
+};
+unsigned char rlimit_in_arg_mask(const char *syscall) {
+    return mask_lookup(rlimit_in_arg_table, syscall);
+}
+
+static const string_arg_entry rlimit_out_arg_table[] = {
+    { "getrlimit", 0x02 },  /* arg 1 */
+    { "prlimit64", 0x08 },  /* arg 3 */
+    { NULL,        0x00 },
+};
+unsigned char rlimit_out_arg_mask(const char *syscall) {
+    return mask_lookup(rlimit_out_arg_table, syscall);
+}
+
 static const string_arg_entry rlimit_resource_arg_table[] = {
     { "getrlimit", 0x01 },  /* arg 0 */
     { "setrlimit", 0x01 },  /* arg 0 */
@@ -827,8 +863,9 @@ unsigned char wait_status_arg_mask(const char *syscall) {
  * actually returns, so like wait_status_arg_mask this is deferred
  * to the exit-stop, not dereferenced here. */
 static const string_arg_entry rusage_arg_table[] = {
-    { "wait4", 0x08 },  /* arg 3 */
-    { NULL,    0x00 },
+    { "wait4",     0x08 },  /* arg 3 */
+    { "getrusage", 0x02 },  /* arg 1 */
+    { NULL,        0x00 },
 };
 
 unsigned char rusage_arg_mask(const char *syscall) {

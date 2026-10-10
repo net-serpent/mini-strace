@@ -82,6 +82,12 @@ unsigned char at_flags_arg_mask(const char *syscall);
 unsigned char unlinkat_flags_arg_mask(const char *syscall);
 unsigned char faccessat_flags_arg_mask(const char *syscall);
 
+/* getrusage's who; struct rlimit arguments (caller-populated "in" and
+ * kernel-populated, deferred "out"). */
+unsigned char rusage_who_arg_mask(const char *syscall);
+unsigned char rlimit_in_arg_mask(const char *syscall);
+unsigned char rlimit_out_arg_mask(const char *syscall);
+
 /* wait4's options, waitid's idtype and options, sched_setscheduler's
  * policy. */
 unsigned char wait4_options_arg_mask(const char *syscall);

@@ -179,6 +179,7 @@ int main(void) {
         { "format_msg_flags",                 format_msg_flags },
         { "format_prctl_option",              format_prctl_option },
         { "format_dirfd(is_fd_arg=0)",        wrap_dirfd },
+        { "format_rusage_who",                format_rusage_who },
         { "format_wait4_options",             format_wait4_options },
         { "format_waitid_options",            format_waitid_options },
         { "format_waitid_idtype",             format_waitid_idtype },
